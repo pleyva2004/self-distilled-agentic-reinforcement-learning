@@ -1,0 +1,90 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,amsthm,mathtools}
+\usepackage{hyperref}
+
+\newtheorem{theorem}{Theorem}
+\newtheorem{proposition}{Proposition}
+\newtheorem{remark}{Remark}
+
+\title{SDAR as a Per-Token Trust-Constraint Lagrangian}
+\author{Improvement 104 -- SDAR study}
+\date{}
+
+\newcommand{\Lsdar}{\mathcal{L}_{\mathrm{SDAR}}}
+\newcommand{\Lgrpo}{\mathcal{L}_{\mathrm{GRPO}}}
+\newcommand{\Jgrpo}{J_{\mathrm{GRPO}}}
+
+\begin{document}
+\maketitle
+
+\section*{Setup}
+
+A \emph{constrained Markov decision process} (CMDP) is a tuple $(\mathcal{S}, \mathcal{A}, P, R, \{C_i, \delta_i\}_{i=1}^k)$ where the agent maximizes the cumulative reward subject to expected-cost constraints $\mathbb{E}_\pi\left[\sum_t C_i(s_t, a_t)\right] \leq \delta_i$. The standard tool is the Lagrangian:
+\[
+\mathcal{L}(\pi, \mu) \;=\; -\mathbb{E}_\pi\left[\sum_t R(s_t, a_t)\right] + \sum_{i=1}^k \mu_i \cdot \left(\mathbb{E}_\pi\!\left[\sum_t C_i\right] - \delta_i\right),
+\]
+with $\mu_i \geq 0$. Convergence theory for CMDPs (Altman 1999; Borkar 2005; Tessler et al.\ 2018) establishes saddle-point conditions on $(\pi^\star, \mu^\star)$ under standard assumptions (convexity of the policy class in occupancy measures, Slater's condition for strict feasibility, decaying step sizes for primal-dual updates).
+
+In SDAR, the policy is parameterized by $\theta$, the per-token quantities are $\Delta_t$ and $g_t$ from the paper, and the GRPO term plays the role of $-\mathbb{E}_\pi\left[\sum_t R\right]$.
+
+\section*{Mapping}
+
+Define the per-token trust constraint
+\[
+\Phi(\theta) \;:=\; \mathbb{E}_{\tau \sim \pi_\theta}\!\left[\frac{\sum_t m_t\, g_t\, \Delta_t}{\sum_t m_t}\right] \;=\; \mathbb{E}_{\tau \sim \pi_\theta}\!\left[\Lsdar(\theta) \cdot \tfrac{1}{|\tau|}\right],
+\]
+i.e.\ the expected SDAR auxiliary, summed (with stop-gradient on $g_t$). Consider the constrained problem
+\begin{equation}\label{eq:cprob}
+\max_\theta \;\Jgrpo(\theta) \quad \text{subject to} \quad \Phi(\theta) \;\leq\; \delta,
+\end{equation}
+for some slack $\delta \geq 0$.
+
+\begin{proposition}[Lagrangian correspondence]\label{prop:corr}
+Let $\mu \geq 0$ be a fixed Lagrange multiplier. The Lagrangian of \eqref{eq:cprob} is
+\[
+\mathcal{L}_{\mathrm{lagr}}(\theta, \mu) \;=\; -\Jgrpo(\theta) + \mu \cdot (\Phi(\theta) - \delta) \;=\; \Lgrpo(\theta) + \mu \cdot \Lsdar(\theta) - \mu \delta + \text{(constants)}.
+\]
+Up to the $\theta$-independent constant $-\mu \delta$, this is exactly the SDAR combined objective with $\lambda_{\mathrm{SDAR}} = \mu$. In particular, $\nabla_\theta \mathcal{L}_{\mathrm{lagr}}(\theta, \mu) = \nabla_\theta\!\left[\Lgrpo + \mu \Lsdar\right]$, so the SDAR training loop is the inner ($\theta$) loop of a \emph{primal-dual scheme with the dual variable held constant}.
+\end{proposition}
+
+\begin{proof}
+Direct substitution. The masked-token average $\mathrm{Agg}$ used in $\Lsdar$ commutes with the outer $\mathbb{E}_\tau$ when we move from per-token to per-trajectory aggregation (the mask weights are deterministic functions of the trajectory), so $\Phi(\theta) = \mathbb{E}_\tau[\Lsdar]$ up to normalization conventions. The $-\Jgrpo = \Lgrpo$ identification is the standard sign convention for the GRPO loss.
+\end{proof}
+
+\section*{Theorem}
+
+\begin{theorem}[CMDP convergence transfers to SDAR]\label{thm:transfer}
+Suppose:
+\begin{enumerate}
+  \item The policy parameterization $\pi_\theta$ admits a convex reformulation in occupancy measures (true for tabular policies; standard relaxation for over-parameterized neural policies, see Mei et al.\ 2020).
+  \item Slater's condition holds for \eqref{eq:cprob}: there exists $\theta_0$ with $\Phi(\theta_0) < \delta$.
+  \item Step sizes $\eta_\theta(k), \eta_\mu(k)$ for primal-dual updates satisfy $\sum_k \eta_\theta = \sum_k \eta_\mu = \infty$, $\sum_k \eta_\theta^2, \sum_k \eta_\mu^2 < \infty$, and $\eta_\mu / \eta_\theta \to 0$ (two-time-scale).
+\end{enumerate}
+Then the primal-dual updates
+\begin{align*}
+\theta_{k+1} &= \theta_k - \eta_\theta(k)\, \nabla_\theta\!\left[\Lgrpo(\theta_k) + \mu_k \Lsdar(\theta_k)\right], \\
+\mu_{k+1} &= \max\!\left\{0,\; \mu_k + \eta_\mu(k)\, (\Phi(\theta_k) - \delta)\right\},
+\end{align*}
+converge almost surely to a saddle point $(\theta^\star, \mu^\star)$ of $\mathcal{L}_{\mathrm{lagr}}$, and $\theta^\star$ solves \eqref{eq:cprob}.
+\end{theorem}
+
+\begin{proof}[Sketch of translation]
+The above is the Borkar (2005) two-time-scale stochastic approximation result for constrained MDPs, instantiated for the specific cost $\Phi$. The technical content is unchanged from the cited literature; the only translation step is verifying that the SDAR cost $\Phi$ satisfies the standard regularity (boundedness of $g_t \Delta_t$ on bounded-support gap distributions; Lipschitz continuity of $\nabla_\theta \Lsdar$ via the gated REINFORCE form derived in concept~10). Both hold under the Assumption~1 of the bias-bound proof and standard smoothness assumptions on $\pi_\theta$.
+
+The converse direction -- that the fixed-$\mu$ scheme used in the SDAR paper (where $\mu = \lambda_{\mathrm{SDAR}}$ is set by hand and not updated) corresponds to a particular $\delta$ -- follows from the strong duality of \eqref{eq:cprob} under Slater: every dual variable $\mu$ corresponds to a unique constraint level $\delta(\mu)$ such that $\Phi(\theta^\star) = \delta(\mu)$ at the dual optimum.
+\end{proof}
+
+\section*{Discussion}
+
+\paragraph{What the connection buys.}
+\begin{itemize}
+  \item \textbf{Principled $\lambda$ schedule.} Theorem~\ref{thm:transfer} says the right way to choose $\lambda_{\mathrm{SDAR}}$ is by dual ascent on $\Phi - \delta$, with $\delta$ chosen on the validation set. This eliminates the need for a $\lambda$ grid search (cf.\ improvement 103) and replaces it with a single tunable: the trust budget $\delta$.
+  \item \textbf{Convergence guarantee.} The fixed-$\lambda$ scheme converges only to a stationary point of the joint loss. The primal-dual scheme converges to a saddle point of the constrained problem, which is provably feasible (i.e.\ the per-token trust constraint is satisfied at the limit). This is a stronger guarantee than the paper currently offers.
+  \item \textbf{Multi-constraint generalization.} If we have multiple gating strategies (entropy, gap, soft-OR), each produces its own constraint $\Phi_i \leq \delta_i$. The Lagrangian becomes $\Lgrpo + \sum_i \mu_i \Lsdar^{(i)}$, with each $\mu_i$ updated by its own dual-ascent step. This is the natural extension of SDAR to a portfolio of gating signals.
+  \item \textbf{Connection to RLHF.} RLHF's $\beta$ KL-to-reference coefficient is also a fixed-multiplier instance of a CMDP (constrain KL to SFT $\leq \delta_{\mathrm{KL}}$). The SDAR-as-CMDP framing thus puts SDAR and RLHF in the same formal category: both are KL-constrained policy improvements with primal-dual training.
+\end{itemize}
+
+\paragraph{Caveat.} Two-time-scale primal-dual is empirically slower to converge than the fixed-$\mu$ scheme. So the practical question is whether the convergence guarantee (and the multi-constraint generalization) outweigh the wall-clock cost. We conjecture yes for production-scale runs and no for small-scale ablations.
+
+\end{document}

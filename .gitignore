@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.cache/
+*.pt
+*.bin
+
+# OS
+.DS_Store
+
+# LaTeX byproducts (PDFs committed by CI to pdfs/ or in-place under learning-map/ and proofs/)
+*.aux
+*.log
+*.bbl
+*.blg
+*.out
+*.toc
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+/04-literature-review.pdf
+/05-improvements.pdf
+learning-map/tour.aux
+learning-map/tour.log
+learning-map/tour.out
+learning-map/tour.pdf
+proofs/*.aux
+proofs/*.log
+proofs/*.out
+proofs/*.pdf

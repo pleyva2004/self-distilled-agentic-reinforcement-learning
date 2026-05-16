@@ -1,0 +1,253 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb, amsthm, mathtools}
+\usepackage[dvipsnames]{xcolor}
+\usepackage{hyperref}
+\usepackage{natbib}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue,
+  citecolor=blue,
+  urlcolor=blue
+}
+
+\title{Self-Distilled Agentic Reinforcement Learning: \\
+       a Literature-Situated Review}
+\author{Paul Leyva \\ \small Study repo: \texttt{ai-research-studies/self-distilled-agentic-reinforcement-learning}}
+\date{\today}
+
+\iffalse
+This .tex file is a Stage-5 deliverable of the /study-paper workflow.
+Compile with:
+  pdflatex 04-literature-review.tex
+  bibtex   04-literature-review
+  pdflatex 04-literature-review.tex
+  pdflatex 04-literature-review.tex
+\fi
+
+\begin{document}
+\maketitle
+
+\section*{Notation}
+
+A compact symbol table is reproduced from \texttt{02-math-deep-dive.md}; full
+glossary is in that file.
+
+\begin{center}
+\begin{tabular}{ll}
+\hline
+Symbol & Meaning \\
+\hline
+$\pi_\theta(\cdot \mid s_t)$ & Student policy on student context $s_t$. \\
+$\pi_T(\cdot \mid s_t^+)$    & Teacher branch: same parameters $\theta$, privileged context $s_t^+$. \\
+$y_t$                        & Token sampled by the student at position $t$. \\
+$\Delta_t$                   & Teacher--student log-prob gap, $\log\pi_T(y_t\mid s_t^+) - \log\pi_\theta(y_t\mid s_t)$. \\
+$h_t$                        & Student entropy, $-\sum_v \pi_\theta(v\mid s_t)\log\pi_\theta(v\mid s_t)$. \\
+$g_t \in [0,1]$              & Per-token sigmoid gate (stop-gradient). \\
+$\beta$                      & Gate sharpness (overloaded with the GRPO KL coefficient). \\
+$\lambda_{\mathrm{SDAR}}$    & Auxiliary loss weight on the SDAR term. \\
+\hline
+\end{tabular}
+\end{center}
+
+\section*{Background: Multi-Turn Agentic Post-Training}
+
+Modern post-training of LLM agents is dominated by reinforcement learning
+with verifiable rewards. Group Relative Policy Optimization (GRPO),
+introduced by \citet{shao2024deepseekmath} and scaled by
+\citet{deepseek2025r1}, is now the workhorse: it strips the value head
+from PPO \citep{schulman2017ppo} and replaces the GAE baseline with a
+group-mean baseline computed across $G$ rollouts of the same prompt. The
+trajectory-level reward is then broadcast token-wise via a clipped
+importance ratio. This pipeline is conceptually a descendant of RLHF
+\citep{christiano2017deep, ouyang2022instructgpt}, with the human-preference
+reward model swapped for a programmatic verifier.
+
+The structural weakness of GRPO in agentic settings is supervisory
+sparsity. A 20-turn trajectory in ALFWorld \citep{shridhar2020alfworld}
+or WebShop \citep{yao2022webshop} compresses thousands of token-level
+decisions into a single scalar reward. \emph{On-Policy Distillation}
+\citep{ye2026opd, yang2026opd} and its self-distilled variant
+\emph{OPSD} \citep{zhao2026opsd} address this by adding a per-token
+auxiliary loss against a teacher branch. In the self-distilled regime
+the teacher is the \emph{same} policy conditioned on a privileged context
+$s_t^+ = s_t \cup \text{(retrieved skill text)}$ available only at training
+time --- a free dense signal. SDAR \citep{lu2026sdar} is the agentic
+extension of this idea, plus a sigmoid gate to handle the multi-turn
+failure modes documented below.
+
+\section*{Method: SDAR}
+
+The full objective is
+\begin{equation}
+\mathcal{L}(\theta) \;=\; \mathcal{L}_{\mathrm{GRPO}}(\theta)
+       \;+\; \lambda_{\mathrm{SDAR}}\cdot \mathcal{L}_{\mathrm{SDAR}}(\theta),
+\label{eq:sdar-objective}
+\end{equation}
+with the per-token SDAR loss
+\begin{equation}
+\ell_t^{\mathrm{SDAR}} \;=\; g_t \cdot \big(\log\pi_T(y_t\mid s_t^+) - \log\pi_\theta(y_t\mid s_t)\big)
+       \;=\; g_t\cdot \Delta_t,
+\label{eq:sdar-token}
+\end{equation}
+aggregated by masked-token average,
+$\mathcal{L}_{\mathrm{SDAR}} = \big(\sum_t m_t g_t \Delta_t\big) / \big(\sum_t m_t\big)$.
+The gap $\Delta_t$ is exactly the negative single-sample estimator of the
+per-token reverse KL between teacher and student, evaluated at the
+student-sampled token --- avoiding a full $|\mathcal{V}|$-wide softmax sum.
+
+\citet{lu2026sdar} benchmark three gating strategies:
+\begin{align}
+\text{entropy:}  \quad & g_t = \sigma(\beta\, h_t), \\
+\text{gap:}      \quad & g_t = \sigma(\beta\, \Delta_t), \\
+\text{soft-OR:}  \quad & g_t = \sigma\!\big(\beta\,[1 - (1-h_t)(1-\Delta_t)]\big).
+\end{align}
+Gap gating is the conceptual centerpiece: it operationalises the
+asymmetric-trust observation. When $\Delta_t > 0$ the privileged context
+is endorsing the student's sampled token --- high-value distillation
+signal --- and the gate opens. When $\Delta_t < 0$ the disagreement is
+ambiguous (could be skill-retrieval failure rather than a true student
+error), and the sigmoid attenuates the update. The gate is detached, so
+the gradient flows only through the student log-prob:
+\begin{equation}
+\nabla_\theta \mathcal{L}_{\mathrm{SDAR}}
+  \;=\; -\,\mathrm{Agg}\!\left[\,g_t\cdot \nabla_\theta \log\pi_\theta(y_t\mid s_t)\,\right],
+\end{equation}
+which is structurally a gated REINFORCE-style update with $g_t$ as a
+per-token signed weight.
+
+\section*{Results}
+
+We summarise Table 1 of \citet{lu2026sdar} on Qwen 2.5 \citep{qwen2024}.
+
+\begin{center}
+\begin{tabular}{lccc}
+\hline
+Method (Qwen 2.5-3B-Instruct) & ALFWorld $\uparrow$ & Search-QA $\uparrow$ & WebShop $\uparrow$ \\
+\hline
+GRPO baseline           & 75.0 & 36.4 & 79.8 \\
+GRPO + OPSD (ungated)   & --   & --   & --   \\
+Skill-GRPO              & --   & --   & --   \\
+Skill-SD                & --   & --   & --   \\
+RLSD                    & --   & --   & --   \\
+\textbf{SDAR (ours)}    & \textbf{84.4} & \textbf{43.4} & \textbf{85.0} \\
+\hline
+\multicolumn{4}{l}{\small Numbers reproduced from \texttt{02-math-deep-dive.md} \S 8;}\\
+\multicolumn{4}{l}{\small dashes indicate baseline numbers not transcribed into the study notes.}\\
+\hline
+\end{tabular}
+\end{center}
+
+The headline gains are $+9.4$ pp on ALFWorld average success, $+7.0$ pp
+on Search-QA \citep{searchqa2017}, and $+5.2$ pp on WebShop Score for the
+3B model. Qwen 2.5-7B-Instruct shows comparable gains. The
+qualitative companion result is Figure 2 of \citet{lu2026sdar}: ungated
+GRPO+OPSD exhibits catastrophic KL-divergence growth across training,
+while gated SDAR keeps the per-turn KL bounded --- direct empirical
+support for the multi-turn-instability story.
+
+\section*{Position in the Literature}
+
+\paragraph{RL backbone.} SDAR's GRPO term is taken essentially verbatim
+from \citet{shao2024deepseekmath}. The PPO surrogate
+\citep{schulman2017ppo} is therefore the deepest underlying optimisation
+primitive --- with the value head removed and the GAE baseline replaced
+by a group-mean baseline. SDAR contributes \emph{nothing} to the RL
+backbone itself; its novelty is the auxiliary objective.
+
+\paragraph{Distillation lineage.} The auxiliary term descends from On-Policy
+Distillation \citep{ye2026opd, yang2026opd}, which formalised teacher
+guidance on student-sampled trajectories, and from On-Policy
+Self-Distillation \citep{zhao2026opsd}, which collapses teacher and
+student into a single set of parameters with a privileged-context
+teacher branch. SDAR's contribution to this lineage is two-fold: (i) the
+agentic, multi-turn observation that vanilla OPSD diverges, and (ii) the
+gating remedy.
+
+\paragraph{Curriculum vs gating.} A parallel response to multi-turn OPSD
+instability is the turn-level curriculum of TCOD \citep{wang2026tcod},
+which schedules teacher influence by turn index. SDAR's gating is the
+``smooth'' alternative --- the gate is computed per token from the
+realised teacher--student gap rather than scheduled exogenously by turn.
+The two designs are not mutually exclusive; combining them is an obvious
+follow-up.
+
+\paragraph{RLHF foundations.} Conceptually the gated distillation term
+plays a role analogous to the KL-to-reference regulariser in InstructGPT
+\citep{ouyang2022instructgpt} and the broader RLHF programme
+\citep{christiano2017deep}: both prevent the policy from drifting too
+far from a reference distribution. SDAR replaces the static SFT
+reference with a dynamic privileged-context teacher and gates the
+constraint per-token rather than treating it as a fixed Lagrangian.
+
+\paragraph{Sibling agentic-RL work.} \citet{rlm2026} (the
+``Reinforcing Recursive Language Models'' alphaXiv blog from the
+NovaSky-AI / SkyRL group) attacks the same supervisory-sparsity problem
+from a different angle: a shared policy is rolled out across a
+\emph{recursive call tree}, and child rollouts inherit advantages from
+their parent. Credit assignment is by tree topology rather than by
+per-token reliability gating. The two designs are complementary;
+\S\,Discussion sketches a hybrid.
+
+\paragraph{Benchmarks.} The agentic suite is standard:
+ALFWorld \citep{shridhar2020alfworld}, WebShop
+\citep{yao2022webshop}, and Search-QA-style tasks
+\citep{searchqa2017}. None of these were designed to stress 50+-turn
+horizons, which is one reason the depth-scaling question (below)
+remains open.
+
+\section*{Discussion}
+
+\paragraph{What the experiments support.} Three claims are well-supported
+by Table 1 and Figure 2 of \citet{lu2026sdar}: (a) ungated OPSD on top of
+GRPO destabilises multi-turn training; (b) any of the three proposed
+gates restores stability; (c) gated SDAR strictly improves over the GRPO
+baseline on every reported aggregate metric for both 3B and 7B
+backbones. The KL-bounded behaviour shown in Figure 2 is direct evidence
+for the failure-mode analysis in \S\,1 of the paper.
+
+\paragraph{What is hand-waved.} The bias--variance argument for gating
+is informal in the paper --- there is no formal theorem that
+gap-gated OPSD is a lower-variance estimator than ungated OPSD, only an
+empirical demonstration. Sensitivity to the two new hyperparameters
+($\beta$ and $\lambda_{\mathrm{SDAR}}$) is not ablated in the main text.
+The interpretation of $\Delta_t$ as a ``trust'' signal also presupposes
+that teacher log-prob is a reliable proxy for skill-retrieval quality
+--- a confidently wrong teacher (high $\Delta_t$, low actual quality)
+would be heavily distilled into the student. This is plausible but not
+directly tested; the slight under-performance of SDAR vs GRPO+OPSD on
+some Search-QA sub-tasks is consistent with this critique.
+
+\paragraph{Three future directions.}
+(1)~\emph{Depth scaling:} re-run on a benchmark with 50--100 effective
+turns and check whether the per-turn KL stays bounded. (2)~\emph{Adaptive
+gates:} learn $\beta$ jointly with $\theta$, or replace the
+hand-designed gate with $g_\phi(s_t, \Delta_t, h_t)$. (3)~\emph{Recursive-call
+extension:} lift gating into the recursive setting of \citet{rlm2026}
+--- gate child rollouts by whether the parent endorses them, combining
+SDAR-style per-token gating with RLM-style tree-level credit
+assignment.
+
+\section*{See Also}
+
+This paper sits inside a broader study chain. The mathematical
+prerequisites are derived from scratch in
+\href{https://github.com/pleyva2004/first-principles-to-llms/blob/main/chapters/ch25/README.md}{Chapter 25 (causal LM as MDP)},
+\href{https://github.com/pleyva2004/first-principles-to-llms/blob/main/chapters/ch27/README.md}{Chapter 27 (tiny GPT pre-training)},
+\href{https://github.com/pleyva2004/first-principles-to-llms/blob/main/chapters/ch28/README.md}{Chapter 28 (SFT, RLHF, DPO)},
+\href{https://github.com/pleyva2004/first-principles-to-llms/blob/main/chapters/ch30/README.md}{Chapter 30 (max-entropy RL)},
+and
+\href{https://github.com/pleyva2004/first-principles-to-llms/blob/main/chapters/ch31/README.md}{Chapter 31 (PG / GRPO derivation)}.
+The sibling agentic-RL study lives at
+\href{https://github.com/pleyva2004/reinforcing-recursive-language-models}{\texttt{pleyva2004/reinforcing-recursive-language-models}}
+--- it tackles the same supervisory-sparsity problem with a different
+mechanism (shared-policy + advantage inheritance across a recursive call
+tree, vs SDAR's teacher branch + gated per-token distillation), and a
+hybrid is sketched above.
+
+\bibliographystyle{plainnat}
+\bibliography{references}
+
+\end{document}

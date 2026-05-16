@@ -1,0 +1,143 @@
+name: Render LaTeX
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '**.tex'
+      - '**.bib'
+      - '.github/workflows/render.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compile literature review
+        if: hashFiles('04-literature-review.tex') != ''
+        uses: xu-cheng/latex-action@v3
+        with:
+          root_file: 04-literature-review.tex
+          latexmk_use_xelatex: false
+          args: -pdf -interaction=nonstopmode -halt-on-error -file-line-error
+
+      - name: Compile improvements
+        if: hashFiles('05-improvements.tex') != ''
+        uses: xu-cheng/latex-action@v3
+        with:
+          root_file: 05-improvements.tex
+          latexmk_use_xelatex: false
+          args: -pdf -interaction=nonstopmode -halt-on-error -file-line-error
+
+      - name: Stage generated PDFs in pdfs/
+        run: |
+          mkdir -p pdfs
+          for f in 04-literature-review.pdf 05-improvements.pdf; do
+            if [ -f "$f" ]; then
+              mv "$f" "pdfs/$f"
+              echo "Moved $f -> pdfs/"
+            fi
+          done
+          ls -la pdfs/
+
+      - name: Commit and push PDFs
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git add pdfs/
+          if git diff --cached --quiet; then
+            echo "No PDF changes to commit"
+            exit 0
+          fi
+          git commit -m "render: update compiled PDFs [skip ci]"
+          for i in 1 2 3; do
+            if git push origin HEAD:main; then exit 0; fi
+            echo "Push rejected (attempt $i); rebasing and retrying."
+            git pull --rebase origin main
+          done
+          exit 1
+
+  render-tour:
+    runs-on: ubuntu-latest
+    needs: render
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Pull latest (render may have just committed)
+        run: git pull --rebase
+      - name: Compile tour
+        if: hashFiles('learning-map/tour.tex') != ''
+        uses: xu-cheng/latex-action@v3
+        with:
+          root_file: tour.tex
+          working_directory: learning-map
+          latexmk_use_xelatex: false
+          args: -pdf -interaction=nonstopmode -halt-on-error
+      - name: Commit tour.pdf
+        if: hashFiles('learning-map/tour.tex') != ''
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git add -f learning-map/tour.pdf 2>/dev/null || true
+          if git diff --cached --quiet; then
+            echo "No tour.pdf change to commit"
+            exit 0
+          fi
+          git commit -m "render: update tour.pdf [skip ci]"
+          for i in 1 2 3; do
+            if git push origin HEAD:main; then exit 0; fi
+            git pull --rebase origin main
+          done
+          exit 1
+
+  render-proofs:
+    runs-on: ubuntu-latest
+    needs: render-tour
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Pull latest
+        run: git pull --rebase
+      - name: Install TeX Live
+        if: hashFiles('proofs/*.tex') != ''
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y --no-install-recommends \
+            texlive-latex-base texlive-latex-recommended texlive-fonts-recommended \
+            texlive-latex-extra texlive-science latexmk
+      - name: Compile every proof
+        if: hashFiles('proofs/*.tex') != ''
+        run: |
+          set -e
+          for f in proofs/*.tex; do
+            [ -f "$f" ] || continue
+            echo "Compiling $f"
+            (cd proofs && latexmk -pdf -interaction=nonstopmode -halt-on-error "$(basename "$f")")
+          done
+          ls -la proofs/
+      - name: Commit proof PDFs
+        if: hashFiles('proofs/*.tex') != ''
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git add -f proofs/*.pdf 2>/dev/null || true
+          if git diff --cached --quiet; then
+            echo "No proof PDF changes to commit"
+            exit 0
+          fi
+          git commit -m "render: update proof PDFs [skip ci]"
+          for i in 1 2 3; do
+            if git push origin HEAD:main; then exit 0; fi
+            git pull --rebase origin main
+          done
+          exit 1

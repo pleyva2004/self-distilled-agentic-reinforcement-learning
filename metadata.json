@@ -1,0 +1,34 @@
+{
+  "slug": "self-distilled-agentic-reinforcement-learning",
+  "title": "Self-Distilled Agentic Reinforcement Learning",
+  "authors": [
+    "Zhengxi Lu", "Zhiyuan Yao", "Zhuowen Han", "Zi-Han Wang", "Jinyang Wu",
+    "(+ 6 more — see source.pdf)"
+  ],
+  "arxiv_id": "2605.15155",
+  "source_url": "https://arxiv.org/abs/2605.15155",
+  "source_kind": "arxiv",
+  "pdf_path": "~/ai-research-studies/self-distilled-agentic-reinforcement-learning/source.pdf",
+  "categories": ["cs.LG", "cs.AI", "cs.CL"],
+  "published": "2026-05-14T17:51:26Z",
+  "headline": "SDAR: treats On-Policy Self-Distillation (OPSD) as a gated auxiliary objective alongside RL. Adds dense token-level supervision from a privileged-context teacher branch to the trajectory-level RL signal, but gates the distillation loss to handle multi-turn agentic instability.",
+  "abstract_preview": "RL has emerged as the central paradigm for post-training LLM agents, but its trajectory-level reward provides only coarse supervision for long-horizon interaction. On-Policy Self-Distillation (OPSD) complements RL with dense token-level guidance from a privileged teacher branch — but transferring OPSD to multi-turn agents is problematic (compounding instability + asymmetric treatment for negative teacher rejections). SDAR keeps RL as the primary optimization backbone and treats OPSD as a gated auxiliary objective.",
+  "started": "2026-05-16",
+  "stages_completed": ["00-hardware-detect", "00-discover", "00-ingest"],
+  "discovery_provenance": {
+    "discovered_via": "/study-paper (no args)",
+    "rank": 3,
+    "tag": "matched",
+    "score": 13.0,
+    "topic_profile_size_at_discovery": 86
+  },
+  "hardware_tier": "tier_mid_gpu",
+  "hardware_tier_description": "Discrete GPU 8-23 GB (NVIDIA GeForce RTX 4070 Laptop GPU, 8.0 GB) — current WSL2 box; user's primary device M4 Pro 48 GB would resolve to tier_high_gpu",
+  "hardware_recommendations": {
+    "max_model_params": 50000000,
+    "max_lora_base_params": 3000000000,
+    "training_budget_minutes": 240,
+    "recommended_frameworks": ["torch (MPS/CUDA)", "MLX (Apple)", "numpy fallback"],
+    "guidance": "GPTs up to ~50M params from scratch (TinyStories class). LoRA on 1.5B-3B base models. Training up to ~4 hours."
+  }
+}

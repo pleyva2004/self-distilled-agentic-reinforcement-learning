@@ -1,0 +1,227 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{hyperref}
+\usepackage{natbib}
+\usepackage{enumitem}
+
+\title{Improvements and Extensions to \\
+       Self-Distilled Agentic Reinforcement Learning (SDAR)}
+\author{Paul Leyva \\ \texttt{ai-research-studies/self-distilled-agentic-reinforcement-learning}}
+\date{2026-05-16}
+
+\newtheorem{assumption}{Assumption}
+\newtheorem{proposition}{Proposition}
+\newtheorem{remark}{Remark}
+
+\begin{document}
+\maketitle
+
+\noindent
+This document proposes four concrete extensions to SDAR \citep{lu2026sdar}.  Each
+section follows the same template: (a) statement, (b) prior-work anchoring,
+(c) what would test it, (d) prototype pointer.  Notation matches the math
+deep dive (\texttt{02-math-deep-dive.md}); in particular, $\Delta_t \;=\;
+\log\pi_T(y_t\mid s_t^+)\!-\!\log\pi_\theta(y_t\mid s_t)$ is the
+teacher--student gap, $g_t = \sigma(\beta\,\mathrm{score}_t)$ is the detached
+gate, and the SDAR objective is
+$\mathcal{L}(\theta) = \mathcal{L}_{\mathrm{GRPO}}(\theta) +
+\lambda_{\mathrm{SDAR}}\cdot \mathcal{L}_{\mathrm{SDAR}}(\theta)$
+with $\mathcal{L}_{\mathrm{SDAR}} = \mathrm{Agg}(g_t \Delta_t)$.
+
+\section*{1.\ Mathematical Improvements: a bias bound for gap gating}
+
+\paragraph{Statement.}  Section~7 of the math deep dive sketches that
+gap-gating reduces bias relative to ungated OPSD, but no closed form is
+given.  We propose the following.
+
+\begin{assumption}[Asymmetric reliability of the gap distribution]
+\label{ass:asym}
+Let $p(\Delta)$ denote the marginal distribution of $\Delta_t$ over training
+tokens (under the joint trajectory distribution induced by $\pi_\theta$ and
+the environment).  There exists a threshold $\tau \le 0$ such that the mass
+$\int_{-\infty}^{\tau} p(\Delta)\,\mathrm{d}\Delta$ is dominated by
+\emph{skill-retrieval failures} --- the privileged context $s_t^+$ contains
+text that misled the teacher branch, so $\Delta < \tau$ is unreliable
+distillation signal.  Mass with $\Delta \ge \tau$ corresponds to reliable
+endorsement (or near-zero disagreement).
+\end{assumption}
+
+This is the formalisation of paper \S 1's three failure modes (skill quality,
+skill utilisation, multi-turn drift), all of which manifest as
+\emph{negative-tail} mass in $p(\Delta)$.
+
+\begin{proposition}[Bias bound for the gated estimator]
+\label{prop:bias}
+Let $\hat g_{\text{ungated}}(\theta)
+   = \mathbb{E}_{\Delta\sim p}[\Delta]$ be the per-token mean of the
+ungated SDAR contribution and let
+$\hat g_{\text{gated}}(\theta) = \mathbb{E}_{\Delta\sim p}[g(\Delta)\Delta]$
+with $g(\Delta) = \sigma(\beta\Delta)$.  Define the \emph{ideal} estimator
+$\hat g_{\text{true}}(\theta) = \int_{\tau}^{\infty}\Delta\,p(\Delta)\,
+\mathrm{d}\Delta$ (the contribution restricted to reliable mass).  Then
+\[
+\bigl|\,\hat g_{\text{gated}}(\theta) - \hat g_{\text{true}}(\theta)\,\bigr|
+\;\le\;
+\underbrace{\int_{-\infty}^{\tau}\!(1\!-\!g(\Delta))\,|\Delta|\,p(\Delta)\,
+\mathrm{d}\Delta}_{\text{negative-tail leakage}}
+\;+\;
+\underbrace{\int_{\tau}^{\infty}\!(1\!-\!g(\Delta))\,\Delta\,p(\Delta)\,
+\mathrm{d}\Delta}_{\text{reliable-tail attenuation}}.
+\]
+Both terms vanish as $\beta\to\infty$ (hard step at zero), with rate
+$O(\exp(-\beta|\tau|))$ for the first and $O(\beta^{-1})$ for the second.
+\end{proposition}
+
+\paragraph{Prior work.}  The decomposition mirrors the
+baseline-doesn't-bias proof of GRPO \citep{shao2024deepseekmath} and the
+chain Ch.~31 derivation, where a state-dependent baseline is shown to be
+zero-mean against the policy gradient.  The gate $g_t$ is detached, so the
+same conditional-expectation argument applies: gating shifts the
+\emph{target} but does not introduce a new dependence on $\theta$.  The
+asymmetric-tail framing is inspired by importance-sampling truncation
+analyses common in PPO \citep{schulman2017ppo} and
+InstructGPT-style RLHF \citep{ouyang2022instructgpt}.
+
+\paragraph{What would test it.}  The full statement and proof appear in
+\texttt{proofs/gating-bias-bound.tex}.  Empirically, the toy bandit in
+\texttt{sandbox/toy\_sdar.py} (and the comparison in
+\texttt{improvements/adaptive-gate.py}) lets us measure the empirical bias
+of the gated vs.\ ungated estimator under a synthetic $p(\Delta)$ with
+controllable negative-tail mass.
+
+\paragraph{Prototype pointer.}  PROOF: \texttt{proofs/gating-bias-bound.tex}
+(stub).  Numerical sanity check: \texttt{improvements/adaptive-gate.py}
+already computes per-token gate-fire rates; extending to bias estimates is
+$\sim$10 lines.
+
+\section*{2.\ Code / Implementation Improvements: adaptive-quantile gating}
+
+\paragraph{Statement.}  The paper uses a fixed sigmoid
+$g_t = \sigma(\beta\,\Delta_t)$ centred at $\Delta_t = 0$.  We propose
+\[
+   g_t \;=\; \sigma\bigl(\beta\,(\Delta_t - \hat q_\tau)\bigr),
+   \qquad
+   \hat q_\tau \leftarrow (1-\eta)\,\hat q_\tau + \eta\,\Delta_t^{\text{thresh}},
+\]
+where $\hat q_\tau$ is an exponentially-moving estimate of the
+$\tau$-quantile (e.g.\ $\tau=0.3$) of recent gaps.  Rationale: the gap
+distribution drifts over training as the student policy improves; the
+\emph{absolute} criterion $\Delta_t > 0$ stops being meaningful after a few
+hundred steps because typical gaps shift toward zero.  A relative criterion
+``fire on the top $1\!-\!\tau$ fraction'' stays well-calibrated.
+
+\paragraph{Prior work.}  Quantile-based truncation has a long history in
+robust statistics; the closest deep-RL precedent is
+\textsc{V-Trace}-style importance-clipping in IMPALA, and the
+running-quantile baselines in \citet{wang2026tcod}.  The detached-gate
+structure is preserved, so the convergence properties argued in Prop.~1
+still apply.
+
+\paragraph{What would test it.}  Three-way comparison on the toy MDP:
+GRPO baseline, fixed-threshold SDAR ($\sigma(2\Delta_t)$), and
+adaptive-quantile SDAR.  Metric: final reward subject to a per-turn KL
+budget identical to the paper's stability criterion.
+
+\paragraph{Prototype pointer.}  MEASUREMENT:
+\texttt{improvements/adaptive-gate.py}.  Returns
+\verb|{fixed_threshold_reward, adaptive_threshold_reward, fixed_kl,|
+\verb|adaptive_kl, gate_fire_rate_fixed, gate_fire_rate_adaptive}|.
+
+\section*{3.\ Experimental Extensions: $\lambda_{\mathrm{SDAR}}$ sensitivity sweep}
+
+\paragraph{Statement.}  The SDAR ablation in the paper fixes
+$\lambda_{\mathrm{SDAR}}$ at one value and varies the gating strategy.  But
+$\lambda_{\mathrm{SDAR}}$ is itself a critical hyperparameter:
+$\lambda_{\mathrm{SDAR}}=0$ recovers GRPO and gives no distillation;
+$\lambda_{\mathrm{SDAR}}\to\infty$ overwhelms the RL signal and the policy
+collapses to a maximum-likelihood estimate of the teacher.  Somewhere
+between is an optimum.  We propose a 5-point sweep
+$\lambda_{\mathrm{SDAR}} \in \{0,\,0.1,\,0.3,\,1,\,3\}$ at fixed $\beta$,
+reporting both final reward and final per-turn KL, and identifying the
+constrained optimum
+\[
+   \lambda^\star \;=\; \arg\max_\lambda \mathrm{reward}(\lambda)
+   \quad \text{s.t.\ } \mathrm{kl}(\lambda)\le 2\cdot\mathrm{kl}(0).
+\]
+
+\paragraph{Prior work.}  Standard auxiliary-loss-weight sweeps appear in
+\citet{deepseek2025r1} and \citet{zhao2026opsd}; both observe an inverted-U
+in reward as the auxiliary weight grows.  Our sweep is the
+agentic-RL specialisation of this exercise.
+
+\paragraph{What would test it.}  Five 100-step training runs on the toy
+MDP, one per $\lambda$ value, with $\beta=2$ held constant.  Constrained
+$\arg\max$ over the resulting (reward, KL) Pareto trace.
+
+\paragraph{Prototype pointer.}  MEASUREMENT:
+\texttt{improvements/lambda-sweep.py}.  Returns the full
+\verb|{sweep, optimal_lambda}| dictionary.
+
+\section*{4.\ Theoretical / Conceptual Connections: SDAR as constrained RL}
+
+\paragraph{Statement.}  Frame the SDAR objective as a
+\emph{constrained} GRPO problem with a per-token trust constraint:
+\[
+   \max_\theta \; J_{\mathrm{GRPO}}(\theta)
+   \quad \text{s.t.\ } \;
+   \mathbb{E}_t \bigl[\,\mathbf{1}[t\in\mathcal{T}]\;
+        D_{\mathrm{KL}}(\pi_\theta(\cdot\mid s_t)\,\|\,\pi_T(\cdot\mid s_t^+))
+   \bigr] \;\le\; \delta,
+\]
+where $\mathcal{T}$ is the set of \emph{trusted} tokens (those for which
+the privileged context endorses the student trajectory).  The Lagrangian is
+\[
+   \mathcal{L}(\theta,\mu)
+   \;=\; J_{\mathrm{GRPO}}(\theta) \;-\; \mu\cdot
+        \Bigl(\mathbb{E}_t[\mathbf{1}[t\in\mathcal{T}]\cdot
+              D_{\mathrm{KL}}^{(t)}] - \delta\Bigr).
+\]
+SDAR's gated loss has \emph{exactly} this structure with the global
+multiplier $\mu$ replaced by a state-dependent per-token multiplier
+$\lambda_{\mathrm{SDAR}}\cdot g_t$.  In other words, SDAR is a
+\emph{soft, primal-only} approximation to a per-token trust-constrained RL
+problem, where the gate $g_t$ is an indicator surrogate for membership in
+$\mathcal{T}$ and $\lambda_{\mathrm{SDAR}}$ is a fixed multiplier that
+plays the role of the dual variable.
+
+\paragraph{Prior work.}  Constrained RL with primal-dual saddle-point
+solvers traces back to the option/sub-goal formalism of
+\citet{sutton1999options}.  The chain Ch.~30 max-entropy-RL derivation
+gives the same Lagrangian form for the entropy-regularised case.  The
+modern primal-only variant (treating $\mu$ as a hyperparameter rather than
+a learned dual variable) is the same shortcut taken by PPO's KL-penalty
+schedule \citep{schulman2017ppo}.
+
+\paragraph{What would test it.}  This is a translation, not a new theorem.
+The deliverable is a short proof sketch in
+\texttt{proofs/sdar-as-constrained-rl.tex} that (i) writes the SDAR
+gradient as the gradient of the Lagrangian above with $\mu = \lambda_{\mathrm{SDAR}}$
+and the indicator replaced by $g_t$, and (ii) cites the saddle-point
+convergence conditions from constrained-RL literature for which SDAR's
+fixed multiplier is sound (essentially: when the constraint is slack at
+the optimum, primal-only with a sufficiently large $\mu$ works).
+
+\paragraph{Prototype pointer.}  PROOF:
+\texttt{proofs/sdar-as-constrained-rl.tex} (stub).
+
+\section*{Discussion}
+
+The four improvements compose.  The mathematical bias bound (\S 1) is the
+\emph{justification} for adaptive-quantile gating (\S 2): the bound's
+negative-tail leakage term shrinks faster when the gate centre tracks the
+empirical $\tau$-quantile rather than sitting at zero.  The
+$\lambda_{\mathrm{SDAR}}$ sweep (\S 3), once run jointly with the adaptive
+gate, would reveal a \emph{joint} optimum
+$(\lambda^\star, \tau^\star)$, plausibly different from the
+single-variable optimum.  And the constrained-RL framing (\S 4) gives the
+$\lambda_{\mathrm{SDAR}}$ sweep its theoretical reading: the optimal
+$\lambda^\star$ is an estimate of the dual variable that would solve the
+constrained problem at the desired KL budget.  Together they upgrade
+SDAR from a heuristic auxiliary loss to a principled primal approximation
+of a per-token trust-constrained agentic-RL problem.
+
+\bibliographystyle{plainnat}
+\bibliography{references}
+
+\end{document}

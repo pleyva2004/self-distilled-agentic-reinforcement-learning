@@ -1,0 +1,24 @@
+{
+  "paper_concepts": [
+    {"id": 1, "slug": "multi-turn-agentic-mdp", "title": "Multi-turn agentic MDP", "level": "intro", "prereqs": []},
+    {"id": 2, "slug": "rl-trajectory-reward", "title": "Trajectory-level RL reward (verifier-driven)", "level": "intro", "prereqs": [1]},
+    {"id": 3, "slug": "grpo-baseline", "title": "GRPO baseline (per-token PPO clip + group-relative advantage)", "level": "intermediate", "prereqs": [2]},
+    {"id": 4, "slug": "opsd-on-policy-self-distillation", "title": "On-Policy Self-Distillation (OPSD)", "level": "intermediate", "prereqs": [1]},
+    {"id": 5, "slug": "teacher-branch-privileged-context", "title": "Teacher branch with privileged context (retrieved skills)", "level": "intermediate", "prereqs": [4]},
+    {"id": 6, "slug": "per-token-reverse-kl", "title": "Per-token reverse KL between teacher and student", "level": "intermediate", "prereqs": [4, 5]},
+    {"id": 7, "slug": "single-sample-gap-estimator", "title": "Single-sample teacher-student log-prob gap estimator", "level": "advanced", "prereqs": [6]},
+    {"id": 8, "slug": "multi-turn-instability-observation", "title": "Observation 1: Multi-turn OPSD instability", "level": "advanced", "prereqs": [4, 5]},
+    {"id": 9, "slug": "asymmetric-trust-observation", "title": "Observation 2: Asymmetric trust in privileged guidance", "level": "advanced", "prereqs": [5, 7]},
+    {"id": 10, "slug": "token-level-gate", "title": "Sigmoid token-level gate (stop-gradient)", "level": "advanced", "prereqs": [7]},
+    {"id": 11, "slug": "entropy-gating", "title": "Entropy gating strategy", "level": "advanced", "prereqs": [10]},
+    {"id": 12, "slug": "gap-gating", "title": "Gap gating strategy (asymmetric trust)", "level": "advanced", "prereqs": [10, 9]},
+    {"id": 13, "slug": "soft-or-gating", "title": "Soft-OR combined gating strategy", "level": "advanced", "prereqs": [11, 12]},
+    {"id": 14, "slug": "sdar-combined-objective", "title": "SDAR combined objective", "level": "advanced", "prereqs": [3, 10]}
+  ],
+  "improvement_concepts": [
+    {"id": 101, "slug": "gating-bias-bound", "title": "Tight bias bound for gap gating", "level": "advanced", "prereqs": [12, 9]},
+    {"id": 102, "slug": "adaptive-gating-threshold", "title": "Adaptive gating via running-quantile of gaps", "level": "advanced", "prereqs": [12]},
+    {"id": 103, "slug": "lambda-sensitivity-sweep", "title": "Sensitivity sweep of lambda_SDAR", "level": "intermediate", "prereqs": [14]},
+    {"id": 104, "slug": "sdar-as-constrained-rl", "title": "SDAR as a per-token trust-constraint Lagrangian", "level": "advanced", "prereqs": [14]}
+  ]
+}

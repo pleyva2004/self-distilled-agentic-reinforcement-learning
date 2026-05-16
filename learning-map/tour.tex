@@ -1,0 +1,76 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,amsthm,mathtools}
+\usepackage{hyperref}
+
+\title{SDAR Study Tour}
+\author{Learning map -- Self-Distilled Agentic Reinforcement Learning (Lu et al.~2026, arXiv:2605.15155)}
+\date{}
+
+\newcommand{\Lsdar}{\mathcal{L}_{\mathrm{SDAR}}}
+\newcommand{\Lgrpo}{\mathcal{L}_{\mathrm{GRPO}}}
+
+\begin{document}
+\maketitle
+
+\section*{1. Reader's contract}
+
+This learning map is for someone who wants to understand SDAR at the level needed to reproduce the math, critique the design, and propose extensions. Three skill-level entry points: \textbf{Beginner} (6--8 hours, read all of \S2), \textbf{Intermediate} (3--4 hours, focus on \S3), \textbf{Advanced} (1--2 hours, jump to \S3 and \S4). The full chain prerequisite is Chain Ch 25, 27, 28, 30, 31. Companion artifacts: 14 paper concept notes, 4 improvement concept notes, 18 runnable Python demos, 2 LaTeX proofs.
+
+\section*{2. Foundations walk}
+
+These five chapters from the foundations chain are prerequisite. Read in order.
+
+\paragraph{Chain Ch 25 -- Causal LM as MDP.} The per-token autoregressive decoding loop is a Markov decision process: state = prompt + tokens-so-far, action = next token. Why this paper needs it: every per-token decision in SDAR is one transition; the multi-turn agentic setting wraps this MDP in an outer environment loop. \emph{Pacing: 30 min, conceptual.}
+
+\paragraph{Chain Ch 27 -- Tiny GPT pre-training.} The decoder-only Transformer architecture. Why this paper needs it: the Qwen 2.5 backbone follows this recipe; you need to be fluent enough to read the SDAR loss equations as gradients on the parameters of such a model. \emph{Pacing: 60 min, mostly review for advanced readers.}
+
+\paragraph{Chain Ch 28 -- SFT, RLHF, DPO.} Supervised fine-tuning, KL-regularized RL from human feedback, direct preference optimization. Why this paper needs it: SDAR's distillation loss is structurally a KL-to-reference, the same primitive as RLHF's KL-to-SFT regularizer. The asymmetric-trust observation parallels DPO's conservatism on negatives. \emph{Pacing: 90 min, central.}
+
+\paragraph{Chain Ch 30 -- Maximum-entropy RL.} Soft Q-learning, the entropy bonus, the Lagrangian dual of constrained MDPs. Why this paper needs it: the gated SDAR loss IS a Lagrangian-style auxiliary, with $\lambda_{\mathrm{SDAR}}$ as the multiplier on a per-token trust constraint. Improvement 104 makes this formal. \emph{Pacing: 60 min for the dual-form derivation alone.}
+
+\paragraph{Chain Ch 31 -- Policy gradients, GRPO, RLHF-DPO bridge.} REINFORCE, PPO, GRPO, the policy-gradient theorem, single-sample estimators. Why this paper needs it: SDAR's RL backbone is GRPO from this chapter verbatim (Equation 2 of the paper). The single-sample teacher-student gap estimator uses the same expectation-replacement trick as the proof of the policy-gradient theorem. \emph{Pacing: 90--120 min, core.}
+
+\section*{3. Paper concepts walk}
+
+A topological order for the 14 concept notes:
+\begin{enumerate}
+  \item Multi-turn agentic MDP -- set up the outer loop.
+  \item Trajectory-level RL reward -- sparse supervision is the pain.
+  \item GRPO baseline -- RL backbone.
+  \item OPSD -- on-policy self-distillation primitive.
+  \item Teacher branch with privileged context -- what makes ``self'' non-trivial.
+  \item Per-token reverse KL -- mode-seeking, $D_{\mathrm{KL}}(\pi_\theta \| \pi_T)$.
+  \item Single-sample gap estimator -- $\Delta_t = \log \pi_T(y_t \mid s_t^+) - \log \pi_\theta(y_t \mid s_t)$.
+  \item Multi-turn instability observation (Obs 1) -- compounding covariate shift.
+  \item Asymmetric trust observation (Obs 2) -- positive vs negative gaps.
+  \item Sigmoid token-level gate -- $g_t = \mathrm{sg}(\sigma(\beta \cdot \mathrm{score}_t))$.
+  \item Entropy gating -- $g_t = \sigma(\beta h_t)$.
+  \item Gap gating -- $g_t = \sigma(\beta \Delta_t)$ (centerpiece).
+  \item Soft-OR gating -- $g_t = \sigma(\beta[1 - (1-h_t)(1-\Delta_t)])$.
+  \item SDAR combined objective -- $\mathcal{L}(\theta) = \Lgrpo(\theta) + \lambda_{\mathrm{SDAR}} \cdot \Lsdar(\theta)$.
+\end{enumerate}
+
+\section*{4. Improvements walk}
+
+\paragraph{101 -- Tight bias bound for gap gating.} The paper's \S7 sketch argues ``lower bias'' without a closed form. We state and prove a quantitative bound: for sub-Gaussian $\Delta_t$ with parameter $\sigma_\Delta$,
+\[
+|B(s_t)| \leq \tfrac{1}{2}\,\mathbb{E}[|\Delta_t|] + O(\beta \sigma_\Delta^2).
+\]
+\textbf{Validation mode: PROOF} -- see \texttt{proofs/gating-bias-bound.tex}.
+
+\paragraph{102 -- Adaptive gating threshold via running quantile.} Replace fixed $\beta$ with a per-batch standardization of $\Delta_t$ using a running median and IQR. The hyperparameter shifts from ``absolute gate sharpness'' to ``fraction of tokens to trust''. \textbf{Validation mode: MEASUREMENT} -- see \texttt{improvements/adaptive-gate.py}.
+
+\paragraph{103 -- Sensitivity sweep of $\lambda_{\mathrm{SDAR}}$.} How flat is the loss vs $\lambda$ landscape? Does an exponential anneal $\lambda(t) = \lambda_0 e^{-t/\tau}$ outperform a constant? Envelope theorem makes per-$\lambda$ sensitivity identifiable from a single trained checkpoint. \textbf{Validation mode: MEASUREMENT} -- see \texttt{improvements/lambda-sweep.py}.
+
+\paragraph{104 -- SDAR as a per-token trust-constraint Lagrangian.} The SDAR combined loss is the Lagrangian of ``maximize GRPO objective subject to $\mathbb{E}_t[g_t \Delta_t] \leq \delta$''. $\lambda_{\mathrm{SDAR}}$ is the (fixed) Lagrange multiplier. The connection imports primal-dual convergence theorems from the constrained-MDP literature. \textbf{Validation mode: PROOF} -- see \texttt{proofs/sdar-as-constrained-rl.tex}.
+
+\section*{5. What to do next}
+
+\begin{enumerate}
+  \item \textbf{(15 min)} Run all 14 paper concept Python scripts. The printed outputs together form a guided narrative of the paper's mechanics.
+  \item \textbf{(2 hr)} Open \texttt{tour.ipynb}, execute every cell, read the proofs. Goal: write the SDAR loss from memory, derive its gradient, explain the sigmoid choice unprompted.
+  \item \textbf{(1 day)} Implement improvement 102 (adaptive gating) and run a short ablation. A negative result is also publishable.
+\end{enumerate}
+
+\end{document}
