@@ -36,6 +36,7 @@ Discovered via the [`study-paper`](https://github.com/pleyva2004/claude-skill-st
 | [`metadata.json`](./metadata.json) | Title, source URL, code URL, discovery provenance, hardware sizing tier |
 | [`01-interview-prep.md`](./01-interview-prep.md) | ~500-word, opinionated talking points: novel / clever / push-back / open questions / one-sentence elevator |
 | [`02-math-deep-dive.md`](./02-math-deep-dive.md) | Mathematician-grade walk-through (~2000 words): agentic MDP, GRPO backbone, OPSD failure modes, single-sample gap estimator, three gating strategies, full SDAR objective, why gated dominates ungated, connections to chain Ch 25-31 + sibling RLM study |
+| [`findings.md`](./findings.md) | **Locally-verified empirical findings** — 3 paper-claim reproductions + 2 improvement measurements, with provenance (machine, numpy version, seed) and per-finding reproduce commands |
 | [`03-opinions.md`](./03-opinions.md) | Opinion-capture template (filled in by hand, not by AI) |
 | [`04-literature-review.tex`](./04-literature-review.tex) | Research-ready LaTeX literature-review entry, standalone-compilable |
 | [`05-improvements.tex`](./05-improvements.tex) | Forward-looking proposals: math (tight bias bound for gap gating), code (adaptive-quantile gating), experimental ($\lambda$-sensitivity sweep), theoretical (SDAR as constrained-RL Lagrangian) |

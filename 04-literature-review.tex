@@ -247,6 +247,12 @@ mechanism (shared-policy + advantage inheritance across a recursive call
 tree, vs SDAR's teacher branch + gated per-token distillation), and a
 hybrid is sketched above.
 
+\section*{Reproduction}
+
+A locally-verified empirical reproduction of three paper claims (SDAR vs GRPO reward / KL on the toy MDP; entropy-gating KL; ungated GRPO+OPSD collapse) and two measurements of proposed improvements ($\lambda_{\mathrm{SDAR}}$ sensitivity sweep; adaptive-quantile gating tradeoff) is recorded at
+\href{https://github.com/pleyva2004/self-distilled-agentic-reinforcement-learning/blob/main/findings.md}{\texttt{findings.md}}
+in the study repository. The findings table includes provenance (machine, numpy version, seed) and per-finding reproduction commands.
+
 \bibliographystyle{plainnat}
 \bibliography{references}
 

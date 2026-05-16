@@ -14,7 +14,7 @@
   "headline": "SDAR: treats On-Policy Self-Distillation (OPSD) as a gated auxiliary objective alongside RL. Adds dense token-level supervision from a privileged-context teacher branch to the trajectory-level RL signal, but gates the distillation loss to handle multi-turn agentic instability.",
   "abstract_preview": "RL has emerged as the central paradigm for post-training LLM agents, but its trajectory-level reward provides only coarse supervision for long-horizon interaction. On-Policy Self-Distillation (OPSD) complements RL with dense token-level guidance from a privileged teacher branch — but transferring OPSD to multi-turn agents is problematic (compounding instability + asymmetric treatment for negative teacher rejections). SDAR keeps RL as the primary optimization backbone and treats OPSD as a gated auxiliary objective.",
   "started": "2026-05-16",
-  "stages_completed": ["00-hardware-detect", "00-discover", "00-ingest"],
+  "stages_completed": ["00-hardware-detect", "00-discover", "00-ingest", "01-interview-prep", "02-math-deep-dive", "03-opinions-template", "04-sandbox", "05-literature-review", "06-improvements", "07-learning-map", "08-publish", "findings"],
   "discovery_provenance": {
     "discovered_via": "/study-paper (no args)",
     "rank": 3,
