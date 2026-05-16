@@ -2,7 +2,7 @@
 
 [![Render LaTeX](https://github.com/pleyva2004/self-distilled-agentic-reinforcement-learning/actions/workflows/render.yml/badge.svg)](https://github.com/pleyva2004/self-distilled-agentic-reinforcement-learning/actions/workflows/render.yml)
 
-> Layered study artifacts — talking points, math deep dive, opinion-capture template, LaTeX literature-review entry, proposed extensions with runnable prototypes, an interactive learning map, and a CPU-runnable sandbox — for [SDAR (Lu et al. 2026, arxiv:2605.15155)](https://arxiv.org/abs/2605.15155).
+> Layered study artifacts — talking points, math deep dive, opinion-capture template, LaTeX literature-review entry, proposed extensions with runnable prototypes, an interactive learning map, and a two-level sandbox (CPU baseline + hardware-upsized for `tier_mid_gpu`) — for [SDAR (Lu et al. 2026, arxiv:2605.15155)](https://arxiv.org/abs/2605.15155).
 
 **Source:** https://arxiv.org/abs/2605.15155 · **Code:** https://github.com/ZJU-REAL/SDAR · **Authors:** Zhengxi Lu et al. (Zhejiang University REAL Lab + Meituan, 11 authors)
 
@@ -60,11 +60,33 @@ GitHub Actions does this automatically on every push that touches `.tex` or `.bi
 
 ## Run the sandbox
 
+The sandbox has **two levels**. See [`sandbox/README.md`](./sandbox/README.md) for per-script details, expected wall-clock, and the mapping back to the math in `02-math-deep-dive.md`.
+
+### Level 1 — CPU baseline (runs anywhere; ~5 seconds total)
+
 ```bash
-cd sandbox && pip install -r requirements.txt
+cd sandbox && pip install numpy matplotlib
 python3 toy_sdar.py        # ~1s on CPU; demonstrates SDAR reward ≥ GRPO reward, SDAR KL ≤ ungated-OPSD KL
 python3 tiny_sdar_lm.py    # ~5s on CPU; reward 0.34 → 0.75 on toy "find substring" task
 ```
+
+Level 1 verifies the *structural* claims of the paper (gating bounds KL, SDAR matches GRPO, ungated OPSD collapses). Measured numbers are recorded in [`findings.md`](./findings.md) § 1-2.
+
+### Level 2 — Hardware-upsized for `tier_mid_gpu` (needs M-series Mac or NVIDIA GPU)
+
+```bash
+cd sandbox && pip install torch tiktoken transformers peft accelerate
+# ~30M-param torch GPT with full SDAR training loop
+python3 torch_sdar.py --steps 5            # smoke test (~2 min on CPU; <30s on MPS)
+python3 torch_sdar.py --train              # full ~200-step training (~30-60 min on M4 Pro MPS)
+# LoRA fine-tune of Qwen 2.5 1.5B Instruct with SDAR on a synthetic agentic task
+python3 real_sdar_lora.py --steps 1        # smoke test (~5 min on M4 Pro)
+python3 real_sdar_lora.py --train          # full LoRA fine-tune (~3-4 hr on M4 Pro)
+```
+
+On Linux without GPU + heavy deps, both Level 2 scripts gracefully print install messages and exit 0.
+
+Level 2 results are **pending a Mac run** — see [`findings.md`](./findings.md) § "Level 2 results (pending Mac run)" for the placeholder template to fill in once you've run the scripts.
 
 ## Run the proposed-improvement prototypes
 
