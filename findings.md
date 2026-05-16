@@ -180,22 +180,63 @@ The SDAR implementation in both scripts is correct (we observe real gradient flo
 
 The paper's setup uses retrieved-skill privileged context on real agentic benchmarks (ALFWorld, Search-QA, WebShop) — these are tasks where the retrieved skill text genuinely changes the model's response strategy, creating the asymmetry SDAR's gating needs. We cannot easily reproduce that asymmetry on a synthetic single-laptop sandbox. The bottleneck is task design + RAG infrastructure, not the SDAR algorithm.
 
-### v7.0.4 patch in place — re-run pending
+### 2.6 v7.0.4 follow-up — teacher prompt now includes the exact gold quote (Mac, 100 steps, MPS)
 
-After observing the § 2.5 limitation, a fourth patch (`v7.0.4`) modified `teacher_prompt` to include the **exact gold quote** as part of the privileged context (not just the paragraph index). Concretely, the teacher's prompt now reads:
+The v7.0.4 patch modified `teacher_prompt` so the privileged context contains the **exact required gold phrase**, not just the paragraph index:
 
 ```
 Hint: the correct paragraph is index N.
 Hint: the exact required quote is: "<short gold phrase>"
 ```
 
-The student's prompt is unchanged. This *should* force the teacher to emit the short phrase reliably (it's literally in the hint), creating the behavioural gap SDAR needs. If this works, a re-run of `python3 real_sdar_lora.py --train` should show:
+Student prompt is unchanged. Hypothesis: this would create the teacher-student behavioural gap SDAR needs to drive reward up.
 
-- Higher and more consistent gate activations (gate > 0.55 on extraction tokens)
-- Positive $\Delta_t$ on the tokens where teacher emits the short phrase but student emits the long verbatim quote
-- Reward climbing from 1.000 toward 1.5-2.0 over the 100 steps
+**Measured (M4 Pro, 100 steps, MPS, 484.1s):**
 
-**Status: patch committed, awaiting Mac re-run.** If results materialise, this section will be updated with the v7.0.4 numbers and a clean "SDAR works when teacher-student behavioural asymmetry is large enough" framing.
+- **Init reward:** 1.000  · **Final reward:** 1.000 (no improvement — same outcome as v7.0.3)
+- **Gate:** drifted from 0.498 (step 0) to **0.453** (step 99) — attenuated, not strongly firing
+- **Δ_t:** drifted from **-0.005** (step 0) to **-0.661** (step 99) — the gap *widened by ~130×* over training
+- **grad_norm:** episodic activity (0.30 at step 45, 0.27 at step 60, 0.17 at step 90) then collapsed to **0.000** by step 99
+- **KL:** stayed within ±0.005 throughout — student didn't drift from initial policy in measurable terms
+
+**The patch did what it was designed to do** (created the teacher-student behavioural gap; Δ_t went from ~0 in v7.0.3 to -0.66 here). **But the gap is in the wrong sign for SDAR to bootstrap from.**
+
+### The SDAR bootstrap problem (the real finding)
+
+Walking through the math: SDAR samples tokens from the *student*, then evaluates them under the *teacher*. The single-sample gap is $\Delta_t = \log \pi_T(y_t \mid s_t^+) - \log \pi_\theta(y_t \mid s_t)$ where $y_t \sim \pi_\theta$. The gated loss minimised is $\ell_t = g_t \cdot \Delta_t$ with $g_t = \sigma(\beta \Delta_t)$.
+
+For our v7.0.4 run, the student deterministically samples the long verbatim quote (e.g., "PPO uses a clipped surrogate min(rho * A, …)"). The teacher's prompt contains "Hint: the exact required quote is: 'min(rho * A, clip(rho, 1 - eps, 1 + eps) * A)'", so its distribution strongly prefers the short phrase as completion — and assigns low probability to the long-continuation tokens the student sampled. Hence $\Delta_t < 0$ on every student-sampled token, growing more negative as the student doubles down on the long-quote strategy (reward = 1.0 stable, no gradient pressure to change).
+
+The gradient of the SDAR loss w.r.t. $\theta$ is $\nabla_\theta \ell_t = -g_t \cdot \nabla_\theta \log \pi_\theta(y_t)$, so minimising the SDAR loss *increases* $\log \pi_\theta(y_t)$ — proportional to $g_t$. The gate $g_t$ only modulates *how much* to push toward $y_t$, it doesn't reverse the direction. **SDAR can only attenuate distillation when the teacher disagrees; it cannot push the student *away* from its current behaviour.**
+
+For SDAR to learn the short phrase, the student would need to *occasionally sample* tokens of the short phrase, so that $y_t$ would briefly come from teacher-preferred territory and $\Delta_t$ would flip positive. With a deterministic-ish student at temperature 1.0 and a 152k-vocab Qwen tokenizer, the probability of sampling the exact gold-phrase tokens is vanishingly small. The student is stuck in a local optimum that GRPO can't push out of (binary reward, no extraction gradient) and SDAR can't push out of (no positive-Δ samples to bootstrap from).
+
+This is **the bootstrap problem** in OPSD/SDAR. The paper avoids it by pre-SFT-ing Qwen 2.5 on teacher-generated traces *before* SDAR — so the student starts already close to the teacher's distribution and SDAR's gradient just refines. The paper's §2 explicitly notes: *"Cold-start SFT… without an SFT phase, Qwen3.5-4B will have 0 pass@16 scores"*. Same root cause.
+
+### What v7.0.4 actually establishes
+
+| Quantity | v7.0.3 (paragraph hint only) | v7.0.4 (exact-quote hint) | Reads as |
+|---|---|---|---|
+| Step-99 Δ_t | ~0 (-0.001 to -0.05) | **-0.661** | Patch successfully created behavioural gap |
+| Step-99 gate | 0.500 | 0.453 | Gate attenuates but doesn't strongly fire |
+| Step-99 grad_norm | 0.000 | 0.000 | Both collapse to degenerate fixed point |
+| Final reward | 1.000 | 1.000 | No learning either way |
+
+The patch isolated the underlying issue cleanly: **the SDAR/OPSD architecture cannot bootstrap a deterministic student toward a behaviourally-different teacher without (a) a pre-SFT cold start, (b) reverse-mode distillation (sample from teacher, not student), or (c) substantial exploration noise (high temperature) so the student occasionally samples teacher-preferred tokens.** None of these are feasible on this single-laptop sandbox without significantly redesigning the algorithm.
+
+This is the actual, durable finding from Level-2 reproduction: a clean characterisation of *when SDAR can and can't bootstrap*. The paper's Qwen 2.5 result works because of (a). Our sandbox cannot reproduce it without adding (a) or (b).
+
+### Practical implication for anyone reusing this codebase
+
+If you want SDAR to actually learn on your own task:
+
+1. **Either** pre-SFT the student on teacher-generated traces first (mirrors the paper's setup) — needs ~thousands of (prompt, teacher-output) pairs and a few hundred SFT steps before SDAR.
+2. **Or** swap the single-sample student-sampling estimator for a reverse-KL formulation that samples from the teacher — adds compute (two forward passes per sample) but gives the bootstrap signal SDAR needs.
+3. **Or** raise sampling temperature so the student explores enough to occasionally produce teacher-preferred tokens — biases the GRPO baseline and slows convergence but provides bootstrap signal.
+
+The current `real_sdar_lora.py` does none of these — it's the cleanest possible implementation of the paper's loss as a vanilla GRPO+SDAR combination, which is *exactly why* it exposes the bootstrap problem so clearly.
+
+**Reproduce:** `cd sandbox && python3 real_sdar_lora.py --train`. Deterministic with seed=0.
 
 ### Provenance for § 2.4 + § 2.5 above
 
