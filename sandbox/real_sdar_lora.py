@@ -154,11 +154,10 @@ RAW_EPISODES: list[dict[str, Any]] = [
             "pre-trained on 18T tokens with grouped-query attention.",
         ],
         "gold_paragraph_idx": 1,
-        "gold_sentence": (
-            "SDAR multiplies the per-token distillation loss by a sigmoid "
-            "gate g_t = sigma(beta * Delta_t) to handle asymmetric trust "
-            "in the privileged teacher branch and bound per-turn KL."
-        ),
+        # v7.0.3: shortened to a key phrase so Qwen's "quote the whole sentence"
+        # strategy stops exact-matching.  The full sentence is still in the
+        # paragraph; the student now has to extract just this fragment.
+        "gold_sentence": "sigmoid gate g_t = sigma(beta * Delta_t)",
     },
     {
         "question": "Which paragraph defines the teacher-student log-prob gap?",
@@ -172,11 +171,7 @@ RAW_EPISODES: list[dict[str, Any]] = [
             "token-level guidance from a teacher branch.",
         ],
         "gold_paragraph_idx": 0,
-        "gold_sentence": (
-            "The teacher-student gap Delta_t = log pi_T(y_t | s_t^+) - "
-            "log pi_theta(y_t | s_t) measures how much extra signal the "
-            "privileged-context teacher branch carries at token t."
-        ),
+        "gold_sentence": "Delta_t = log pi_T(y_t | s_t^+) - log pi_theta(y_t | s_t)",
     },
     {
         "question": "Which paragraph states the SDAR combined objective?",
@@ -191,11 +186,7 @@ RAW_EPISODES: list[dict[str, Any]] = [
             "single-sample distillation auxiliary.",
         ],
         "gold_paragraph_idx": 2,
-        "gold_sentence": (
-            "The combined SDAR objective is L(theta) = L_GRPO(theta) + "
-            "lambda_SDAR * L_SDAR(theta), where L_SDAR is the gated "
-            "single-sample distillation auxiliary."
-        ),
+        "gold_sentence": "L(theta) = L_GRPO(theta) + lambda_SDAR * L_SDAR(theta)",
     },
     {
         "question": "Which paragraph shows ungated OPSD's failure mode?",
@@ -210,11 +201,7 @@ RAW_EPISODES: list[dict[str, Any]] = [
             "which is useful for long-horizon agentic rollouts.",
         ],
         "gold_paragraph_idx": 0,
-        "gold_sentence": (
-            "Multi-turn agentic training amplifies student drift; "
-            "without gating, the OPSD KL term grows unboundedly and "
-            "the policy collapses from chance-level reward to ~0."
-        ),
+        "gold_sentence": "the OPSD KL term grows unboundedly",
     },
     {
         "question": "Which paragraph describes the PPO clipping mechanism?",
@@ -228,11 +215,7 @@ RAW_EPISODES: list[dict[str, Any]] = [
             "gradient and is the default for transformer training.",
         ],
         "gold_paragraph_idx": 1,
-        "gold_sentence": (
-            "PPO uses a clipped surrogate min(rho * A, clip(rho, "
-            "1 - eps, 1 + eps) * A) to bound the per-step policy "
-            "change and prevent destructive updates."
-        ),
+        "gold_sentence": "min(rho * A, clip(rho, 1 - eps, 1 + eps) * A)",
     },
     {
         "question": "Which paragraph explains group-relative advantage?",
@@ -246,11 +229,7 @@ RAW_EPISODES: list[dict[str, Any]] = [
             "available devices and casts model weights accordingly.",
         ],
         "gold_paragraph_idx": 1,
-        "gold_sentence": (
-            "Group-relative advantage A_g = (r_g - mu_r) / sigma_r "
-            "computes each rollout's advantage relative to the mean and "
-            "std of rewards across the group of G rollouts."
-        ),
+        "gold_sentence": "A_g = (r_g - mu_r) / sigma_r",
     },
     {
         "question": "Which paragraph defines OPSD?",
@@ -265,11 +244,7 @@ RAW_EPISODES: list[dict[str, Any]] = [
             "context for the teacher branch.",
         ],
         "gold_paragraph_idx": 0,
-        "gold_sentence": (
-            "OPSD is on-policy self-distillation: at every training "
-            "step the student is distilled against a teacher branch of "
-            "the same model conditioned on extra privileged context."
-        ),
+        "gold_sentence": "distilled against a teacher branch of the same model",
     },
 ]
 
