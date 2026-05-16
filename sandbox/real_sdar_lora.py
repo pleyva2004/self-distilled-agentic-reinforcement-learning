@@ -356,32 +356,39 @@ def _token_set_f1(a: str, b: str) -> float:
     return 2 * precision * recall / (precision + recall)
 
 
+def _norm_for_match(s: str) -> str:
+    """Lowercase + collapse whitespace + strip punctuation for exact-match comparison."""
+    s = s.lower()
+    s = re.sub(r"[^a-z0-9\s]", " ", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+
 def compute_reward(parsed: dict, ep: Episode) -> float:
     """Combined reward in [0, 2].
 
-    (v7.0.1 patch.) Original reward gave +F1 whenever F1 > 0.3 with no length
-    penalty.  Qwen 2.5 1.5B Instruct trivially scored 2.0 from step 0 by
-    quoting the relevant paragraph wholesale (any superset of the gold
-    sentence has F1 = 1.0 against the gold under token-set F1), leaving GRPO
-    with no advantage variance to optimise against.
+    (v7.0.1 + v7.0.2 patch.) Original reward gave +F1 whenever F1 > 0.3.
+    Qwen 2.5 1.5B Instruct trivially scored 2.0 from step 0 by quoting the
+    relevant sentence verbatim (token-set F1 = 1.0 against an exact superset).
+    Even the stricter F1 > 0.7 + length penalty didn't bite because Qwen's
+    extractions exactly match the labelled gold sentences (paragraphs are
+    designed for unambiguous selection).
 
-    Tightened reward:
-      * +1 if paragraph index matches gold (unchanged).
-      * +F1 if F1 > 0.7 (much stricter precision requirement).
-      * Halved if extracted quote is more than 2x the gold sentence length
-        (penalises "quote everything" strategies that win loose F1).
+    Final tightening: require an EXACT match on the extracted quote
+    (case-insensitive, whitespace-normalised, punctuation-stripped) for the
+    sentence-extraction half of the reward.  Paragraph selection still gets
+    +1.  Combined reward in [0, 2].
+
+    Now Qwen will reliably get +1 for paragraph selection (the task it's
+    good at) but the +1 for sentence extraction is contingent on producing
+    the exact gold sentence — a much higher bar that leaves room for SDAR
+    to demonstrably improve the model's quote precision over training.
     """
     r = 0.0
     if parsed["paragraph_idx"] == ep.gold_paragraph_idx:
         r += 1.0
-    f1 = _token_set_f1(parsed["quote"], ep.gold_sentence)
-    if f1 > 0.7:
-        r += f1
-        # Length penalty for over-quoting.
-        quote_len = len(parsed["quote"])
-        gold_len = max(1, len(ep.gold_sentence))
-        if quote_len > 2 * gold_len:
-            r *= 0.5
+    if _norm_for_match(parsed["quote"]) == _norm_for_match(ep.gold_sentence):
+        r += 1.0
     return r
 
 
