@@ -1,39 +1,63 @@
-# SDAR sandbox — runnable demos for *Self-Distilled Agentic RL*
+# Sandbox
 
-Two minimal numpy-only scripts that demonstrate the core mechanism of
-**SDAR** (Lu et al. 2026, arxiv:2605.15155): a **gated, per-token
-auxiliary self-distillation loss** stacked on top of GRPO.
+This sandbox demonstrates SDAR at two levels.
 
-```
-L(theta) = L_GRPO(theta) + lambda_SDAR * L_SDAR(theta)
-ell_t^SDAR = g_t * ( log pi_T(y_t | s_t^+) - log pi_theta(y_t | s_t) )
-           = g_t * Delta_t
-```
+## Level 1: CPU baseline (runs anywhere)
 
-The gate `g_t = sigma(beta * Delta_t)` (or `sigma(beta * h_t)`) is a stop-grad
-detached scalar that decides how much weight to put on each token's distillation
-signal. The two scripts here exhibit two complementary failure-mode tests:
+Pure numpy, no GPU required, fast (~3s total). Verifies the *structural* claims of the paper: gating bounds KL, SDAR matches GRPO on reward, ungated OPSD collapses.
 
-| Script              | What it shows                                                             | Runtime |
-|---------------------|---------------------------------------------------------------------------|---------|
-| `toy_sdar.py`       | Tabular 4-turn MDP. Compares 4 variants. Gated SDAR matches GRPO reward AND keeps per-turn KL strictly below ungated GRPO+OPSD. | <30s |
-| `tiny_sdar_lm.py`   | Synthetic "find char X" task on a tiny char-level LM. Reward improves from chance (~0.34) to ~0.75 in 50 GRPO steps; KL bounded; gate fires diagnostically. | <30s |
+| Script | Demonstrates | Runtime (CPU) |
+|--------|--------------|---------------|
+| `toy_sdar.py` | SDAR vs GRPO vs ungated-OPSD on 4-turn tabular MDP | ~1s |
+| `tiny_sdar_lm.py` | SDAR on numpy tiny GPT, "find substring X" task | ~5s |
 
-## Run
-
+Install + run:
 ```bash
-python3 -m pip install -r requirements.txt   # numpy + matplotlib
+pip install numpy matplotlib
 python3 toy_sdar.py
 python3 tiny_sdar_lm.py
 ```
 
-`toy_sdar.py` writes `toy_sdar_curves.png` if matplotlib is available;
-otherwise it prints the metric table.
+See [`findings.md`](../findings.md) for measured numbers from Level 1.
 
-## Equation -> implementation map (deep dive sections 4-7)
+## Level 2: Hardware-upsized (tier_mid_gpu)
 
-The deep dive lives at `../02-math-deep-dive.md`. The table below ties each
-math object to where it lives in code.
+Sized to the detected hardware tier (`tier_mid_gpu` per `metadata.json`). Demonstrates SDAR at a scale where qualitative results match what would happen with a frontier model.
+
+| Script | Demonstrates | Runtime (estimate) | Needs |
+|--------|--------------|--------------------|-----|
+| `torch_sdar.py` | ~30M-param torch GPT trained with SDAR, "find substring" task scaled up | ~30-60 min on M4 Pro MPS | torch + tiktoken |
+| `real_sdar_lora.py` | LoRA fine-tune of Qwen 2.5 1.5B Instruct with SDAR on synthetic agentic task | ~3-4 hr on M4 Pro | torch + transformers + peft + accelerate; 48 GB unified RAM recommended |
+
+Install + run (Mac with M-series silicon):
+```bash
+pip install torch tiktoken transformers peft accelerate
+python3 torch_sdar.py --steps 5     # smoke test (~2 min on CPU; faster on MPS)
+python3 torch_sdar.py --train       # full ~200-step training (~30-60 min on MPS)
+python3 real_sdar_lora.py --steps 1 # smoke test (~5 min on Mac M4 Pro)
+python3 real_sdar_lora.py --train   # full LoRA fine-tune (~3-4 hr on M4 Pro)
+```
+
+On Linux without GPU + heavy deps, both Level 2 scripts gracefully print install messages and exit 0.
+
+See [`findings.md`](../findings.md) "## Level 2 results (pending Mac run)" for the placeholder where Level 2 numbers will be filled in once the user runs the scripts on their M4 Pro.
+
+## What each level verifies
+
+| Level | Verifies | Failure mode |
+|-------|----------|--------------|
+| 1 | Algorithm's *structural* properties — reward shape, KL bound, sensitivity curves. Reproduces deterministically with `np.random.seed(0)`. | Algorithm-level bug in the gating mechanism would show up here |
+| 2 | Algorithm *transfers* to a setting closer to the paper's experimental regime (~30M GPT, or LoRA on 1.5B Qwen). Numbers differ from Level 1; the question is whether the qualitative shape holds at scale. | Scale-dependent failure modes only visible above ~1M params |
+
+## Hardware tier note
+
+This study's `metadata.json` lists `hardware_tier = "tier_mid_gpu"` (NVIDIA 8-23 GB OR Apple Silicon 16-32 GB unified) from the v4.0 study-paper hardware-detection feature. Re-run with `python3 ~/.claude/skills/study-paper/templates/detect-hardware.py --force --summary` to refresh.
+
+User's primary device is a MacBook Pro M4 Pro (48 GB unified). On that machine, `tier_high_gpu` would apply — the Level 2 scripts are sized to fit `tier_mid_gpu` so they also run comfortably on M4 Pro.
+
+## Equation -> implementation map (Level 1 scripts)
+
+The deep dive lives at `../02-math-deep-dive.md`. The table below ties each math object to where it lives in the Level-1 numpy code.
 
 | Symbol             | Meaning                                | `toy_sdar.py`                                | `tiny_sdar_lm.py`                       |
 |--------------------|----------------------------------------|----------------------------------------------|-----------------------------------------|
@@ -47,93 +71,19 @@ math object to where it lives in code.
 | Combined objective | `L_GRPO + lambda * L_SDAR`             | `g_total = gp + LAMBDA_SDAR * ga`            | summation inside `grpo_sdar_step`       |
 | GRPO group adv     | `(R - mu) / sigma` (Sec 2)             | `grpo_grad()` lines `mu = rewards.mean()...` | `grpo_sdar_step()` `mu = rewards.mean()...` |
 
-## What each script demonstrates
-
-### `toy_sdar.py` (math-clean)
-
-A 4-turn MDP, 5 actions per turn, one secret correct action per turn. The
-**student** is per-(turn, action) softmax logits. The **teacher** is the
-same logits with a fixed bonus `+B = 1.5` on the correct action (modelling
-the privileged retrieved-skill context). All four variants train on the
-same MDP for 200 steps with group size G=8 and learning rate 0.05:
-
-| variant                  | what                                       |
-|--------------------------|--------------------------------------------|
-| `grpo`                   | vanilla GRPO baseline                      |
-| `grpo_opsd_ungated`      | adds ungated OPSD (`g_t == 1`)             |
-| `sdar` (gap gate)        | adds `sigma(beta * Delta_t)`-weighted aux  |
-| `sdar_entropy`           | adds `sigma(beta * h_t)`-weighted aux      |
-
-The script asserts at the end:
-- `final_reward(SDAR) >= final_reward(GRPO) - 0.05`
-- `final_kl(SDAR) <= final_kl(GRPO+OPSD)`
-
-Both pass on seed 0 with the default config.
-
-Sample run on the WSL2 box:
-
-```
-GRPO                3.234         0.7504
-GRPO+OPSD ungated   3.922         2.2615
-SDAR (gap-gate)     3.906         2.1888
-SDAR (entropy-gt)   3.828         1.7791
-```
-
-Both gated variants close the reward gap to ungated OPSD while strictly
-reducing the per-turn KL drift. Entropy gating gives the cleanest KL bound
-because the gate magnitude is tied to student confidence, not Delta.
-
-### `tiny_sdar_lm.py` (LM-grade)
-
-A pure-numpy character-level LM (vocab=30, hidden=16) trained with GRPO +
-SDAR on a synthetic agentic task. The student receives `find: X`, the
-teacher receives `find: X X X X X X X X X` (the "retrieved skill"
-hint repeats the target). Reward = 1 if the 10-token completion contains
-the target character `X` (out of `{a, e, i, o}`).
-
-Architecture is intentionally tiny:
-
-- `TinyLM` = token embedding `E` + LM head `(W, b)`. The full transformer
-  block is REPLACED by a mean-pool over the last `CTX_K` context tokens.
-  This is the same parameter set you'd update if you froze a real
-  transformer's attention/MLP and only fine-tuned embed + head — the
-  trick the chain Ch.31 GRPO cell uses.
-- 50 GRPO outer steps, group size G=4, `lambda_SDAR=0.5`, `beta=2.0`.
-
-Sample run:
-```
-initial eval reward (32 tasks)  : 0.344
-final   eval reward (64 tasks)  : 0.750     # +118%
-per-token KL (current vs init)   : 1.378     # bounded
-mean gate-fire rate              : 0.500     # gate sits in linear regime
-```
-
-## Hardware-tier note
-
-These scripts are CPU-only and run in <30s combined.  `metadata.json`
-classifies the box as `tier_mid_gpu` (8 GB CUDA), so the sandbox is
-deliberately **smaller** than the budget allows — the goal is fast,
-auditable mathematical demonstration of the SDAR mechanism, not a full
-training run.
-
-For higher tiers (`tier_high_gpu` / `tier_a100`) you can scale up
-`tiny_sdar_lm.py` along these axes:
-
-- swap `TinyLM` for a real transformer (Ch.23 of the chain repo); freeze
-  attention/MLP, only fine-tune embed + head (the `gE/gW/gb` interface is
-  unchanged).
-- raise `D` from 16 -> 384 and add `n_layer=6`.
-- expand `TARGET_ALPHA` to all 26 letters and bump `N_STEPS` to 500-1000.
-- add a learned KL penalty `beta * KL(pi_theta || pi_init)` to GRPO and
-  compare against the implicit KL bound the SDAR gate provides.
+The Level-2 scripts (`torch_sdar.py`, `real_sdar_lora.py`) share the same symbol-to-code structure — see their `sdar_grpo_loss()` function for the gate + Delta + PPO-clipped GRPO combination.
 
 ## Files
 
 ```
 sandbox/
   README.md            - this file
-  requirements.txt     - numpy>=1.24, matplotlib>=3.5
-  toy_sdar.py          - 4-turn tabular MDP, 4-variant comparison
-  tiny_sdar_lm.py      - mini-LM SDAR loop on "find: X"
+  requirements.txt     - Level 1 + Level 2 deps
+  toy_sdar.py          - LEVEL 1: 4-turn tabular MDP, 4-variant comparison
+  tiny_sdar_lm.py      - LEVEL 1: mini-LM SDAR loop on "find: X"
   toy_sdar_curves.png  - generated by toy_sdar.py if matplotlib present
+  torch_sdar.py        - LEVEL 2: ~30M-param torch GPT + SDAR on MPS/CUDA/CPU
+  real_sdar_lora.py    - LEVEL 2: LoRA fine-tune of Qwen 2.5 1.5B Instruct
+  torch_sdar.pt        - generated by torch_sdar.py after --train
+  sdar_lora_adapter/   - generated by real_sdar_lora.py after --train
 ```

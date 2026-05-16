@@ -41,7 +41,7 @@ Discovered via the [`study-paper`](https://github.com/pleyva2004/claude-skill-st
 | [`04-literature-review.tex`](./04-literature-review.tex) | Research-ready LaTeX literature-review entry, standalone-compilable |
 | [`05-improvements.tex`](./05-improvements.tex) | Forward-looking proposals: math (tight bias bound for gap gating), code (adaptive-quantile gating), experimental ($\lambda$-sensitivity sweep), theoretical (SDAR as constrained-RL Lagrangian) |
 | [`improvements/`](./improvements/) | Runnable Python prototypes: `adaptive-gate.py` + `lambda-sweep.py`, each with `measure() -> dict` |
-| [`sandbox/`](./sandbox/) | CPU-runnable demonstrations: `toy_sdar.py` (4-turn tabular MDP showing SDAR matches GRPO on reward AND keeps KL bounded vs ungated OPSD) + `tiny_sdar_lm.py` (the same algorithm on the chain repo's Ch 27 tiny GPT) |
+| [`sandbox/`](./sandbox/) | **Two-level**: Level 1 = CPU baseline (`toy_sdar.py` + `tiny_sdar_lm.py`, pure numpy, ~5s total) + Level 2 = tier_mid_gpu-sized (`torch_sdar.py` ~30M GPT on MPS + `real_sdar_lora.py` LoRA on Qwen 2.5 1.5B). |
 | [`learning-map/`](./learning-map/) | Three-graph interactive learning map: `paper/` (14 paper concepts) + `improvements/` (4 improvement concepts) + `tour.{md,tex,ipynb}` (cross-cutting tour) |
 | [`proofs/`](./proofs/) | Per-improvement proof artifacts: `gating-bias-bound.tex` (math validation) + `sdar-as-constrained-rl.tex` (theoretical validation) |
 | [`references.bib`](./references.bib) | BibTeX entries: SDAR + 14 prior works it engages with |

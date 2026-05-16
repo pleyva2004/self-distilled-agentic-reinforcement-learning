@@ -1,2 +1,13 @@
+# Level 1 (CPU baseline)
 numpy>=1.24
 matplotlib>=3.5
+
+# Level 2 (hardware-upsized, requires GPU or M-series Mac for full runs)
+torch>=2.4
+tiktoken>=0.5
+datasets>=2.14
+
+# Level 2 (LoRA on real LM, requires high-RAM GPU)
+transformers>=4.45
+peft>=0.12
+accelerate>=1.0

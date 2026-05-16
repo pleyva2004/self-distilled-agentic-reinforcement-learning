@@ -117,7 +117,7 @@ PROOF: [`proofs/sdar-as-constrained-rl.tex`](./proofs/sdar-as-constrained-rl.tex
 - **Machine:** Linux 6.6.114.1-microsoft-standard-WSL2 (WSL2 on Razer Blade 16, Intel i9-13950HX, 64 GB host RAM, 15 GB allocated to WSL).
 - **Python:** 3.12.3
 - **numpy:** 2.4.4
-- **Hardware tier (from `metadata.json`):** `tier_mid_gpu` (the GPU isn't used; all scripts are CPU-only by design).
+- **Hardware tier (from `metadata.json`):** `tier_mid_gpu`. **Level 1 scripts (the ones measured below) are CPU-only by Level-1 design — they verify structural properties; the GPU would not change the measurements.** Level 2 scripts (`torch_sdar.py` + `real_sdar_lora.py`, added in v7.0) DO use the GPU and produce a separate set of measurements; see "Level 2 results" below.
 - **Seed:** `np.random.seed(0)` baked into every script.
 - **Date:** 2026-05-16
 - **Total runtime for all four scripts:** ~3 seconds combined on the WSL2 CPU.
@@ -127,3 +127,33 @@ All numbers above were also measured by the v6.0 sandbox-build subagents during 
 ### Corrections vs initial chat summary
 
 - Initial v6.0 chat summary said "**Ungated GRPO+OPSD collapses on the LM task** (reward 0.075, KL 1.81)". **Correction:** the 0.075 collapse is on the toy 4-turn MDP at small batch (Improvement-3 sweep setup), not the LM task. The LM task's ungated-OPSD result was never measured in this study. The qualitative claim — ungated OPSD becomes pathological — still holds.
+- Original v6.0 findings stated "the GPU isn't used; all scripts are CPU-only by design." **Correction (v7.0):** Level 1 scripts are CPU-only by *Level-1 design* (they verify structural properties that don't change with scale). Level 2 scripts (`torch_sdar.py`, `real_sdar_lora.py`) added in v7.0 DO use the GPU and produce separate measurements; see "Level 2 results (pending Mac run)" above.
+
+---
+
+## Level 2 results (pending Mac run)
+
+The v7.0 Level-2 sandbox (`sandbox/torch_sdar.py` + `sandbox/real_sdar_lora.py`) was added to demonstrate SDAR at the scale the paper actually targets (Qwen 2.5 family). These scripts have NOT been run yet — they require an M-series Mac or a CUDA GPU + several hours of wall-clock. They live ready-to-run; results will be filled in here after a Mac-side run.
+
+### 2.4 torch_sdar.py — ~30M-param GPT trained with SDAR
+
+Placeholders to be filled in after `python3 sandbox/torch_sdar.py --train` on M4 Pro (~30-60 min):
+
+- Final reward (GRPO baseline): _TBD_
+- Final reward (SDAR gap-gating): _TBD_
+- Final per-token KL (current vs init): _TBD_
+- Wall-clock: _TBD_
+- Sample completions before vs after: _TBD_
+
+### 2.5 real_sdar_lora.py — LoRA fine-tune of Qwen 2.5 1.5B Instruct with SDAR
+
+Placeholders to be filled in after `python3 sandbox/real_sdar_lora.py --train` on M4 Pro (~3-4 hr):
+
+- Initial reward (Qwen baseline, no fine-tune): _TBD_
+- Final reward (after LoRA + SDAR): _TBD_
+- Final KL to base policy: _TBD_
+- Gate-fire rate over training: _TBD_
+- Wall-clock: _TBD_
+- Sample completions before vs after: _TBD_
+
+To fill these in after running, append the measured numbers and add a "Provenance" line noting the Mac's specs + numpy/torch versions + date.
