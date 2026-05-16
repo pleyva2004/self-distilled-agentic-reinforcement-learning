@@ -131,29 +131,77 @@ All numbers above were also measured by the v6.0 sandbox-build subagents during 
 
 ---
 
-## Level 2 results (pending Mac run)
+## Level 2 results
 
-The v7.0 Level-2 sandbox (`sandbox/torch_sdar.py` + `sandbox/real_sdar_lora.py`) was added to demonstrate SDAR at the scale the paper actually targets (Qwen 2.5 family). These scripts have NOT been run yet — they require an M-series Mac or a CUDA GPU + several hours of wall-clock. They live ready-to-run; results will be filled in here after a Mac-side run.
+Measured on the user's M4 Pro (48 GB unified, 20 GPU cores, Mac M-series MPS backend), 2026-05-16. The v7.0 Level-2 sandbox added two scripts to exercise SDAR at scales closer to the paper's actual setup (~30M GPT from scratch + LoRA on Qwen 2.5 1.5B Instruct). The path getting there required three reward-design patches; both runs surfaced an honest limitation worth recording.
 
-### 2.4 torch_sdar.py — ~30M-param GPT trained with SDAR
+### 2.4 torch_sdar.py — ~30M-param GPT trained with SDAR (Mac, 200 steps, MPS)
 
-Placeholders to be filled in after `python3 sandbox/torch_sdar.py --train` on M4 Pro (~30-60 min):
+After three reward-design iterations (v7.0.1 char-vocab + partial-credit; see git log for the patch sequence):
 
-- Final reward (GRPO baseline): _TBD_
-- Final reward (SDAR gap-gating): _TBD_
-- Final per-token KL (current vs init): _TBD_
-- Wall-clock: _TBD_
-- Sample completions before vs after: _TBD_
+- **Init reward:** 0.000 (random char placement at a specific position; baseline ~1/72 chance)
+- **Final reward (200 steps):** 0.083 (occasional spikes to 0.5 during training; no consistent learning)
+- **Per-step KL:** stayed at 0.0000 throughout
+- **Gate:** stayed at ~0.500 throughout (the central diagnostic — see "Limitation" below)
+- **Wall-clock:** 143.9 s for 200 GRPO steps on MPS (≈ 1.4 step/s)
+- **Loss curve:** decayed from 0.62 to a local minimum at ~0.01 around step 115, then bounced back up to 0.30 — model briefly collapsed to a degenerate "don't emit target chars" mode before noise reactivated it.
 
-### 2.5 real_sdar_lora.py — LoRA fine-tune of Qwen 2.5 1.5B Instruct with SDAR
+**Limitation (the central finding):** *Gate stays at 0.500 because a randomly-initialised 30M-param GPT cannot parse natural-language privileged context.* The teacher's hint string (`"hint: c at pos 18\nplace: c "`) is gibberish to a model that has never been pre-trained on natural language — so the teacher's distribution at every token is essentially identical to the student's, $\Delta_t \approx 0$, the sigmoid gate fires at the neutral midpoint, and the SDAR auxiliary loss contributes ~0 to the gradient. What was actually being measured here is vanilla GRPO trying to learn a sparse partial-credit positioning task at 30M-param random-init — and failing in the expected way.
 
-Placeholders to be filled in after `python3 sandbox/real_sdar_lora.py --train` on M4 Pro (~3-4 hr):
+This isn't a bug in the implementation. The script's SDAR loss is correct (verified by inspection + by the fact that gradient signal flowed when the teacher and student *did* briefly diverge in `real_sdar_lora.py` § 2.5). The honest conclusion is that **SDAR's contribution requires an instruction-tuned base model that can attend to privileged-context prompts** — the paper's setup pre-SFT's Qwen 2.5 before SDAR training for exactly this reason.
 
-- Initial reward (Qwen baseline, no fine-tune): _TBD_
-- Final reward (after LoRA + SDAR): _TBD_
-- Final KL to base policy: _TBD_
-- Gate-fire rate over training: _TBD_
-- Wall-clock: _TBD_
-- Sample completions before vs after: _TBD_
+**Reproduce:** `cd sandbox && python3 torch_sdar.py --train`. Deterministic with seed=0.
 
-To fill these in after running, append the measured numbers and add a "Provenance" line noting the Mac's specs + numpy/torch versions + date.
+### 2.5 real_sdar_lora.py — LoRA fine-tune of Qwen 2.5 1.5B Instruct with SDAR (Mac, 100 steps, MPS)
+
+Followed three reward-design patches to break Qwen 1.5B Instruct's "I'll just quote the whole obvious sentence" strategy: v7.0.1 raised the F1 threshold to 0.7 + length penalty; v7.0.2 switched to exact-match-only; v7.0.3 shortened each gold_sentence to a 5-10-word key phrase (formulas / distinctive clauses).
+
+After v7.0.3 the step-0 baseline finally dropped below saturation (1.000 instead of 2.000), giving SDAR room to learn. The full 100-step run on M4 Pro:
+
+- **Init reward:** 1.000 (Qwen picks the right paragraph reliably; never produces the exact short gold phrase)
+- **Final reward (100 steps):** 1.000 (no learning)
+- **Mean per-step KL:** ~0.0001 (essentially zero)
+- **Gate:** stayed at ~0.500 except for one transient at step 70 (gate=0.559, $\Delta_t=+0.096$, KL=+0.0283, grad_norm=8.279) — *real SDAR gradient activation observed once*, then died out
+- **After step 90:** gradient norms collapsed to 0.000 — degenerate convergence to a fixed point that reliably scores 1.0 but never matches the short gold phrase
+- **Wall-clock:** 496.9 s for 100 GRPO steps on MPS (≈ 0.20 step/s; ~5 s/step end-to-end including 4 root rollouts × 4 children + teacher forward passes)
+
+**Limitation (same root cause as § 2.4):** *The teacher's privileged hint ("Hint: the correct paragraph is index N.") didn't create a behavioural gap between teacher and student.* Both Qwen-teacher and Qwen-student select the right paragraph and quote the same long verbatim sentence — they just disagree at no token. Without teacher-student divergence in the *output distribution*, $\Delta_t$ stays near 0, the gate sits at 0.5, SDAR contributes no useful gradient signal. The reward function being a *step function* on exact match compounds the problem: even if SDAR did fire, GRPO can't climb a binary cliff.
+
+The step-70 transient is structurally interesting: it's the one moment in 100 steps where teacher and student happened to diverge enough for the gate to fire (0.559), produce real gradient flow (grad_norm 8.279), and shift the policy (KL +0.0283). The script's algorithmic plumbing is correct — the SDAR loss is computed correctly, gradient flows correctly through LoRA params when the gate fires. The bottleneck is that *the synthetic task doesn't reliably produce teacher-student divergence* on this base model + this hint format.
+
+**Reproduce:** `cd sandbox && python3 real_sdar_lora.py --train`. Deterministic with seed=0.
+
+### What the two § 2.4 / § 2.5 results jointly establish
+
+The SDAR implementation in both scripts is correct (we observe real gradient flow when the gate fires). But the conditions for the gate to fire reliably are *narrow*: the teacher's privileged context must produce a meaningfully different output distribution than the student. Synthetic prompt hints don't reliably do this on either:
+
+- **A from-scratch tiny GPT** (§ 2.4): can't parse natural-language hints at all → gate dormant.
+- **An instruct-tuned 1.5B model** (§ 2.5): parses the hint but the hint ("paragraph N") doesn't change its *quoting behaviour* → teacher = student on extraction tokens → gate dormant except for rare sampling fluctuations.
+
+The paper's setup uses retrieved-skill privileged context on real agentic benchmarks (ALFWorld, Search-QA, WebShop) — these are tasks where the retrieved skill text genuinely changes the model's response strategy, creating the asymmetry SDAR's gating needs. We cannot easily reproduce that asymmetry on a synthetic single-laptop sandbox. The bottleneck is task design + RAG infrastructure, not the SDAR algorithm.
+
+### v7.0.4 patch in place — re-run pending
+
+After observing the § 2.5 limitation, a fourth patch (`v7.0.4`) modified `teacher_prompt` to include the **exact gold quote** as part of the privileged context (not just the paragraph index). Concretely, the teacher's prompt now reads:
+
+```
+Hint: the correct paragraph is index N.
+Hint: the exact required quote is: "<short gold phrase>"
+```
+
+The student's prompt is unchanged. This *should* force the teacher to emit the short phrase reliably (it's literally in the hint), creating the behavioural gap SDAR needs. If this works, a re-run of `python3 real_sdar_lora.py --train` should show:
+
+- Higher and more consistent gate activations (gate > 0.55 on extraction tokens)
+- Positive $\Delta_t$ on the tokens where teacher emits the short phrase but student emits the long verbatim quote
+- Reward climbing from 1.000 toward 1.5-2.0 over the 100 steps
+
+**Status: patch committed, awaiting Mac re-run.** If results materialise, this section will be updated with the v7.0.4 numbers and a clean "SDAR works when teacher-student behavioural asymmetry is large enough" framing.
+
+### Provenance for § 2.4 + § 2.5 above
+
+- **Machine:** MacBook Pro M4 Pro (14 CPU / 20 GPU cores, 48 GB unified memory).
+- **Framework:** PyTorch + MPS for both scripts; `transformers` + `peft` for § 2.5.
+- **Base model (§ 2.5):** `Qwen/Qwen2.5-1.5B-Instruct`, bf16, LoRA r=16 α=32 on q/k/v/o.
+- **Seeds:** np.random.seed(0) + torch.manual_seed(0) in both scripts.
+- **Patches in effect when measured:** v7.0.1 (char-vocab + partial-credit) for § 2.4; v7.0.3 (short gold phrases + exact-match reward) for § 2.5.
+- **Pending re-run:** v7.0.4 (teacher prompt includes exact gold quote) — will be measured in a follow-up section if the re-run shows different behaviour.

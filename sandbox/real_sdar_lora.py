@@ -274,11 +274,33 @@ def student_prompt(ep: Episode) -> str:
 
 
 def teacher_prompt(ep: Episode) -> str:
-    """Same prompt, but with a privileged hint exposing the gold index."""
+    """Same prompt, but with a privileged hint exposing the gold index AND the
+    exact gold quote.
+
+    (v7.0.4 patch.) The original hint only revealed the paragraph index, which
+    didn't change Qwen's *quoting behaviour* — student and teacher both emit
+    the same long verbatim quote, so Delta_t ~ 0, the gate stays at 0.5, and
+    SDAR's auxiliary loss contributes ~0 to the gradient (empirical 100-step
+    Mac run: gate ~ 0.5 throughout except one transient at step 70).
+
+    To create a *real* behavioural gap between teacher and student, the
+    teacher's privileged context now includes the EXACT gold quote it should
+    emit.  The student's prompt stays unchanged.  With this asymmetry:
+      * Teacher reliably emits the short, exact gold phrase.
+      * Student naturally emits the longer, obvious quote-the-sentence response.
+      * Delta_t > 0 sharply on the extraction tokens where teacher endorses
+        a different (shorter) phrasing than the student would sample.
+      * Gap gating fires, distillation pulls student toward the shorter phrasing.
+
+    This is closer in spirit to the paper's setup (where the privileged
+    context = retrieved skill text that genuinely changes the model's
+    behaviour) than a paragraph-index hint that doesn't change behaviour.
+    """
     return (
         "You are a research assistant. Given a question and 3 candidate paragraphs, "
         "select the most relevant paragraph and quote its key sentence.\n\n"
-        f"Hint: the correct paragraph is index {ep.gold_paragraph_idx}.\n\n"
+        f"Hint: the correct paragraph is index {ep.gold_paragraph_idx}.\n"
+        f"Hint: the exact required quote is: \"{ep.gold_sentence}\"\n\n"
         f"Question: {ep.question}\n\n"
         f"Paragraphs:\n{_format_paragraphs(ep.paragraphs)}\n\n"
         "Respond exactly in this format:\n"
