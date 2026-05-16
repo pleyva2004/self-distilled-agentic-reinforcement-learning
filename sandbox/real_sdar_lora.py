@@ -357,13 +357,31 @@ def _token_set_f1(a: str, b: str) -> float:
 
 
 def compute_reward(parsed: dict, ep: Episode) -> float:
-    """+1 if paragraph index matches gold; +F1(extracted, gold_sentence) if >0.3."""
+    """Combined reward in [0, 2].
+
+    (v7.0.1 patch.) Original reward gave +F1 whenever F1 > 0.3 with no length
+    penalty.  Qwen 2.5 1.5B Instruct trivially scored 2.0 from step 0 by
+    quoting the relevant paragraph wholesale (any superset of the gold
+    sentence has F1 = 1.0 against the gold under token-set F1), leaving GRPO
+    with no advantage variance to optimise against.
+
+    Tightened reward:
+      * +1 if paragraph index matches gold (unchanged).
+      * +F1 if F1 > 0.7 (much stricter precision requirement).
+      * Halved if extracted quote is more than 2x the gold sentence length
+        (penalises "quote everything" strategies that win loose F1).
+    """
     r = 0.0
     if parsed["paragraph_idx"] == ep.gold_paragraph_idx:
         r += 1.0
     f1 = _token_set_f1(parsed["quote"], ep.gold_sentence)
-    if f1 > 0.3:
+    if f1 > 0.7:
         r += f1
+        # Length penalty for over-quoting.
+        quote_len = len(parsed["quote"])
+        gold_len = max(1, len(ep.gold_sentence))
+        if quote_len > 2 * gold_len:
+            r *= 0.5
     return r
 
 

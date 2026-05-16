@@ -158,23 +158,18 @@ class _CharTokenizer:
 
 
 def build_tokenizer():
-    """Return (tokenizer, name).  Tiktoken gpt2 if available, else char-level."""
-    if _HAS_TIKTOKEN:
-        try:
-            enc = tiktoken.get_encoding("gpt2")
+    """Return (tokenizer, name).
 
-            class _Wrap:
-                vocab_size = enc.n_vocab
-
-                def encode(self, s: str) -> list[int]:
-                    return enc.encode(s)
-
-                def decode(self, ids: list[int]) -> str:
-                    return enc.decode(ids)
-
-            return _Wrap(), "tiktoken-gpt2"
-        except Exception:
-            pass
+    NOTE (v7.0.1 patch): we always use the char-level tokenizer for this task,
+    even when tiktoken is installed.  With a 50k-vocab BPE the "find: X
+    anywhere in the generation" task is trivial (the target character lands by
+    chance in nearly every rollout, reward saturates at ~1.0 from step 0, and
+    GRPO has no advantage variance to optimise against — observed empirically
+    on M4 Pro MPS, 200 steps, reward 1.000 -> 0.750 with KL ~ 0).  Char-level
+    (~30 vocab) plus the position-specific reward (see ``reward_for``) gives
+    the student a real ~3% baseline that the teacher's privileged hint can
+    actually push above.
+    """
     return _CharTokenizer(), "char-fallback"
 
 
@@ -281,16 +276,46 @@ def sample_task(rng) -> tuple[str, int]:
 def make_prompts(char: str, pos: int) -> tuple[str, str]:
     """Return (student_prompt, teacher_prompt).
 
-    The teacher gets the privileged hint that exposes the target's position.
+    The teacher gets the privileged hint that exposes the target's *position*.
+    The student knows only the target character.
     """
-    student = f"find: {char} "
-    teacher = f"hint: {char} at pos {pos}\nfind: {char} "
+    student = f"place: {char} "
+    teacher = f"hint: {char} at pos {pos}\nplace: {char} "
     return student, teacher
 
 
-def reward_for(generated_text: str, target_char: str) -> float:
-    """+1 if the target character appears anywhere in the generation."""
-    return 1.0 if target_char in generated_text else 0.0
+def reward_for(generated_text: str, target_char: str, pos: int) -> float:
+    """Partial-credit reward, decaying with distance from the target position.
+
+    (v7.0.1 patch.) The original reward ("+1 if target appears anywhere") let
+    the 30M-param GPT pin reward at 1.0 from step 0 (every rollout had the
+    target somewhere by chance), so GRPO had no advantage variance and
+    couldn't learn.  A naive "+1 only if exactly at pos" overcorrects: at
+    char-vocab=72 with G=4 rollouts per group, only ~5% of groups produce a
+    non-zero reward, so most gradient steps are no-ops.
+
+    Partial credit by distance gives a dense signal: every rollout where the
+    target appears at all contributes something, but the magnitude shrinks
+    as you move away from the hinted position.  Concretely:
+
+        distance 0  ->  1.00
+        distance 1  ->  0.67
+        distance 2  ->  0.33
+        distance 3+ ->  0.00  (and absent ->  0.00)
+
+    The teacher's privileged hint ("X at pos P") tells it exactly where to
+    place the character; the student starts uniform and must learn the
+    placement from the gated distillation signal.
+    """
+    if not generated_text:
+        return 0.0
+    target_positions = [i for i, c in enumerate(generated_text) if c == target_char]
+    if not target_positions:
+        return 0.0
+    dist = min(abs(i - pos) for i in target_positions)
+    if dist > 2:
+        return 0.0
+    return max(0.0, 1.0 - dist / 3.0)
 
 
 # ---------------------------------------------------------------------------
@@ -355,7 +380,7 @@ def generate_rollout(model, tokenizer, char: str, pos: int, device: str) -> Roll
         gen_ids=gen_ids.detach(),
         old_logprobs=old_logprobs.detach(),
         decoded=decoded,
-        reward=reward_for(decoded, char),
+        reward=reward_for(decoded, char, pos),
     )
 
 
